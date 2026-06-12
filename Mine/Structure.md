@@ -50,3 +50,16 @@ The project's success is defined by rigorously evaluating the performance delta 
 1. **OOD Length Generalization:** Does the mathematically pre-trained model maintain a statistically significant higher accuracy when tested on sequence lengths it was not explicitly trained on?
 2. **Convergence Speed:** Does the pre-trained model converge on the in-distribution training data (3-digit and 4-digit arithmetic) faster than the baseline?
 3. **Attention Mapping Analysis:** Analyzing the attention matrices to observe if the pre-trained model exhibits shift-invariant, highly localized attention patterns that mirror algorithmic recursion, rather than relying on absolute sequence positions.
+
+project_root/
+│
+├── core/
+│   ├── rule30.py         # The 1D CA mathematical generator
+│   ├── transformer.py    # The hybrid PyTorch architecture
+│   └── scratchpad.py     # The arithmetic dataset generator
+│
+├── train_phase4.ipynb    # Executed in Colab (Pre-training on Rule 30)
+├── train_phase5.ipynb    # Executed in Colab (Fine-tuning on Math)
+│
+├── README.md             # Your generated GitHub description
+└── requirements.txt
