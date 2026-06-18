@@ -21,6 +21,11 @@ class CharTokenizer:
     def encode(self, text, max_len=None):
         indices = [self.char_to_idx[c] for c in text]
         if max_len is not None:
+            if len(indices) > max_len:
+                raise ValueError(
+                    f"Encoded sequence length {len(indices)} exceeds max_len={max_len}. "
+                    "Increase max_seq_len or reduce the generation length."
+                )
             # Pad sequences to ensure uniform tensor shapes for batching
             padding = [self.pad_idx] * (max_len - len(indices))
             indices = indices + padding
