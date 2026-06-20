@@ -164,5 +164,8 @@ def run_phase5_ab_test():
             print(f"  Model B (Random Baseline)   | Train: {acc_train_B:6.2f}% | OOD (5-digit): {acc_val_B:6.2f}%")
             print("-" * 65)
 
+        if epoch % 100 == 0: 
+            torch.save(model_A.state_dict(), f"epochs/modelA_epoch_{epoch}.pt")
+
 if __name__ == "__main__":
     run_phase5_ab_test()
