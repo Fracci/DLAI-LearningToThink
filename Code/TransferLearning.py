@@ -47,7 +47,7 @@ def run_phase5_ab_test():
     model_A = Rule30Transformer(vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD, num_layers=NUM_LAYERS).to(device)
     
     # Load the perfect Rule 30 weights
-    pretrained_path = "/kaggle/working/master_rule30.pt"
+    pretrained_path = "rule30_pretrained_gpu.pt"
     pretrained_dict = torch.load(pretrained_path, map_location=device)
     
     # Filter out the old binary embeddings and output head
