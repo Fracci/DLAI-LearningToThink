@@ -1,3 +1,5 @@
+from tracemalloc import start
+
 import torch
 import torch.nn as nn
 import math
@@ -48,9 +50,10 @@ class Rule30Transformer(nn.Module):
         
         # 2. ALiBi Slope Generation (Linear progression for localized 1D Automata)
         def get_slopes(n):
-            # Creates steep penalties [0.5, 1.0, 1.5, 2.0] for 4 heads.
-            # This mathematically isolates local cells and breaks binary symmetry.
-            return [0.5 * (i + 1) for i in range(n)]
+            # Calculates the optimal geometric decay starting point
+            start = (2 ** (-2 ** -(math.log2(n) - 3)))
+            ratio = start
+            return [start * (ratio ** i) for i in range(n)]
         
         slopes = torch.tensor(get_slopes(self.nhead), device=device)
         
