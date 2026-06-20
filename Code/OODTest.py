@@ -26,7 +26,7 @@ def run_ood_length_test():
     # ---------------------------------------------------------
     model = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=4, num_layers=4).to(device)
     
-    checkpoint_path = "/kaggle/working/rule30_pretrained_gpu.pt"
+    checkpoint_path = "rule30_pretrained_gpu.pt"
     try:
         model.load_state_dict(torch.load(checkpoint_path, map_location=device))
         print("Successfully loaded pre-trained Transformer weights.")
