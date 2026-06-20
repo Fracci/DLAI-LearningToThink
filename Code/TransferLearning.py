@@ -47,7 +47,7 @@ def run_phase5_ab_test():
     # ---------------------------------------------------------
     model_A = Rule30Transformer(vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD, num_layers=NUM_LAYERS).to(device)
     
-    pretrained_path = "/kaggle/working/rule30_pretrained_gpu.pt"
+    pretrained_path = "rule30_pretrained_gpu.pt"
     pretrained_dict = torch.load(pretrained_path, map_location=device)
     
     # FILTER THE DICTIONARY: Remove embeddings and output head since vocab sizes don't match!
