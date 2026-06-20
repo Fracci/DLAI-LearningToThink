@@ -16,7 +16,7 @@ def run_phase5_ab_test():
     NHEAD = 4
     NUM_LAYERS = 4
     BATCH_SIZE = 128
-    EPOCHS = 100         # May need to increase depending on Grokking speed
+    EPOCHS = 300         # Increased to allow the Grokking phase shift
     MAX_SEQ_LEN = 128
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -26,34 +26,32 @@ def run_phase5_ab_test():
     VOCAB_SIZE = tokenizer.vocab_size
 
     # ---------------------------------------------------------
-    # 2. Data Engineering: In-Distribution (3-4 digits) & OOD (5 digits)
+    # 2. Data Engineering: In-Distribution & OOD
     # ---------------------------------------------------------
-    # Training strictly on 3 and 4 digit math
     train_dataset = ScratchpadAdditionDataset(
         num_samples=15000, min_digits=3, max_digits=4, 
         tokenizer=tokenizer, max_seq_len=MAX_SEQ_LEN
     )
     train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
 
-    # Testing generalization to completely unseen 5-digit math
     ood_val_dataset = ScratchpadAdditionDataset(
         num_samples=1000, min_digits=5, max_digits=5, 
-        tokenizer=tokenizer, max_seq_len=MAX_SEQ_LEN + 32 # Give it room for the longer scratchpad
+        tokenizer=tokenizer, max_seq_len=MAX_SEQ_LEN + 32
     )
     ood_val_loader = DataLoader(ood_val_dataset, batch_size=BATCH_SIZE, pin_memory=True)
 
     # ---------------------------------------------------------
     # 3. Model A: The Rule 30 Pre-Trained Engine
     # ---------------------------------------------------------
+    # We use the EXACT SAME architecture, just with a wider vocabulary
     model_A = Rule30Transformer(vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD, num_layers=NUM_LAYERS).to(device)
     
-    pretrained_path = "rule30_pretrained_gpu.pt"
+    # Load the perfect Rule 30 weights
+    pretrained_path = "/kaggle/working/master_rule30.pt"
     pretrained_dict = torch.load(pretrained_path, map_location=device)
     
-    # FILTER THE DICTIONARY: Remove embeddings and output head since vocab sizes don't match!
+    # Filter out the old binary embeddings and output head
     filtered_dict = {k: v for k, v in pretrained_dict.items() if not k.startswith("embedding.") and not k.startswith("fc_out.")}
-    
-    # Load the core logic, allow embeddings/head to randomly initialize
     model_A.load_state_dict(filtered_dict, strict=False)
     print("Model A: Loaded Rule 30 Causal Attention Maps (Embeddings/Head re-initialized).")
 
@@ -64,12 +62,26 @@ def run_phase5_ab_test():
     print("Model B: Initialized with completely random weights.")
 
     # ---------------------------------------------------------
-    # 5. Optimization Prep
+    # 5. DIFFERENTIAL OPTIMIZATION (THE FIX)
     # ---------------------------------------------------------
-    # Note: ignore_index prevents the model from wasting capacity predicting <PAD>
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_idx)
     
-    opt_A = AdamW(model_A.parameters(), lr=5e-4, weight_decay=0.1) # Grokking prefers high weight decay
+    # Isolate Model A's new components vs pre-trained components
+    pretrained_params_A = []
+    new_params_A = []
+    for name, param in model_A.named_parameters():
+        if "embedding" in name or "fc_out" in name:
+            new_params_A.append(param)
+        else:
+            pretrained_params_A.append(param)
+            
+    # Protect the pre-trained "brain" with a tiny learning rate, but train the new head fast
+    opt_A = AdamW([
+        {'params': new_params_A, 'lr': 1e-3},          
+        {'params': pretrained_params_A, 'lr': 2e-5}    # 50x smaller LR!
+    ], weight_decay=0.1)
+    
+    # Model B is entirely random, so it learns globally at a standard rate
     opt_B = AdamW(model_B.parameters(), lr=5e-4, weight_decay=0.1)
     
     scaler_A = GradScaler()
@@ -78,7 +90,7 @@ def run_phase5_ab_test():
     # ---------------------------------------------------------
     # 6. The A/B Training Loop
     # ---------------------------------------------------------
-    print("\nStarting A/B Training Loop (Waiting for Grokking...)")
+    print("\nStarting A/B Training Loop (Protected Transfer)...")
     
     for epoch in range(EPOCHS):
         model_A.train()
@@ -89,7 +101,7 @@ def run_phase5_ab_test():
         
         for x, y in train_loader:
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
-            valid_mask = (y != tokenizer.pad_idx) # Only count actual characters for accuracy
+            valid_mask = (y != tokenizer.pad_idx)
             
             # --- Train Model A ---
             opt_A.zero_grad()
@@ -145,10 +157,12 @@ def run_phase5_ab_test():
         acc_val_A = (val_correct_A / total_val_tokens) * 100
         acc_val_B = (val_correct_B / total_val_tokens) * 100
         
-        print(f"Epoch [{epoch+1:3d}/{EPOCHS}]")
-        print(f"  Model A (Pre-Trained) | Train: {acc_train_A:6.2f}% | OOD (5-digit): {acc_val_A:6.2f}%")
-        print(f"  Model B (Baseline)    | Train: {acc_train_B:6.2f}% | OOD (5-digit): {acc_val_B:6.2f}%")
-        print("-" * 65)
+        # Print every 5 epochs to keep the console clean
+        if epoch % 5 == 0 or epoch == EPOCHS - 1:
+            print(f"Epoch [{epoch+1:3d}/{EPOCHS}]")
+            print(f"  Model A (Protected Rule 30) | Train: {acc_train_A:6.2f}% | OOD (5-digit): {acc_val_A:6.2f}%")
+            print(f"  Model B (Random Baseline)   | Train: {acc_train_B:6.2f}% | OOD (5-digit): {acc_val_B:6.2f}%")
+            print("-" * 65)
 
 if __name__ == "__main__":
     run_phase5_ab_test()
