@@ -94,7 +94,7 @@ def run_grokking_experiment():
         if epoch % 50 == 0 or epoch == EPOCHS - 1:
             print(f"Epoch {epoch:4d} | Train Acc: {(train_correct/train_total)*100:6.2f}% | Val Acc: {(val_correct/val_total)*100:6.2f}% | Val Loss: {val_loss_sum/len(val_loader):.4f} | L2 Norm: {l2_norm:.2f}")
 
-    torch.save(model.state_dict(), "/kaggle/working/micro_rule30_pretrained.pt")
+    torch.save(model.state_dict(), "micro_rule30_pretrained.pt")
     print(f"Training Complete. Time: {time.time() - start_time:.2f}s")
 
 if __name__ == "__main__":
