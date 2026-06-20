@@ -16,7 +16,7 @@ def run_phase5_ab_test():
     NHEAD = 4
     NUM_LAYERS = 4
     BATCH_SIZE = 128
-    EPOCHS = 300         # Increased to allow the Grokking phase shift
+    EPOCHS = 3000         # Increased to allow the Grokking phase shift
     MAX_SEQ_LEN = 128
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
