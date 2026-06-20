@@ -46,11 +46,11 @@ class Rule30Transformer(nn.Module):
         # 1. Base Causal Mask: Upper triangular matrix of -inf (blocks future tokens)
         causal_mask = nn.Transformer.generate_square_subsequent_mask(seq_len).to(device)
         
-        # 2. ALiBi Slope Generation (geometric progression based on number of heads)
+        # 2. ALiBi Slope Generation (Linear progression for localized 1D Automata)
         def get_slopes(n):
-            start = (2 ** (-2 ** -(math.log2(n) - 3)))
-            ratio = start
-            return [start * (ratio ** i) for i in range(n)]
+            # Creates steep penalties [0.5, 1.0, 1.5, 2.0] for 4 heads.
+            # This mathematically isolates local cells and breaks binary symmetry.
+            return [0.5 * (i + 1) for i in range(n)]
         
         slopes = torch.tensor(get_slopes(self.nhead), device=device)
         
