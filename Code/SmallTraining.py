@@ -20,7 +20,7 @@ def train_kaggle_gpu():
     
     SEQ_LENGTH = 256       # Longer sequences test the memory buffer better
     BATCH_SIZE = 128       # Maximize GPU VRAM usage
-    EPOCHS = 150           
+    EPOCHS = 20         
     NUM_SAMPLES = 20000    # Larger virtual dataset per epoch
     
     WEIGHT_DECAY = 0.1   
