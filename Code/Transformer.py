@@ -8,10 +8,10 @@ class Rule30Transformer(nn.Module):
     def __init__(
         self, 
         vocab_size=2,          
-        d_model=128,           
+        d_model=256,           
         nhead=8,               
-        num_layers=4,          
-        dim_feedforward=512, 
+        num_layers=6,          
+        dim_feedforward=1024, 
         dropout=0.1
     ):
         super().__init__()

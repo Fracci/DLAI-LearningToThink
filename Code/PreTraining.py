@@ -14,16 +14,16 @@ def train_kaggle_gpu():
     # 1. Hyperparameters (Scaled UP for Kaggle GPU execution)
     # ---------------------------------------------------------
     VOCAB_SIZE = 2
-    D_MODEL = 128          # Increased model width
-    NHEAD = 4
-    NUM_LAYERS = 4
+    D_MODEL = 256          # Increased model width
+    NHEAD = 8
+    NUM_LAYERS = 6
     
     SEQ_LENGTH = 256       # Longer sequences test the memory buffer better
     BATCH_SIZE = 128       # Maximize GPU VRAM usage
     EPOCHS = 300         
     NUM_SAMPLES = 20000    # Larger virtual dataset per epoch
     
-    WEIGHT_DECAY = 0.1   
+    WEIGHT_DECAY = 0.2   
     LEARNING_RATE = 1e-3
     
     # Auto-detect GPU
@@ -37,7 +37,8 @@ def train_kaggle_gpu():
         vocab_size=VOCAB_SIZE,
         d_model=D_MODEL,
         nhead=NHEAD,
-        num_layers=NUM_LAYERS
+        num_layers=NUM_LAYERS,
+        dim_feedforward=1024,
     ).to(device)
 
     dataset = Rule30Dataset(num_samples=NUM_SAMPLES, seq_length=SEQ_LENGTH)
