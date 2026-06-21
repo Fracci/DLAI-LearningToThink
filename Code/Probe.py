@@ -27,7 +27,7 @@ class ProbeMLP(nn.Module):
 
 def run_probing_experiment():
     # Hyperparameters
-    D_MODEL = 128
+    D_MODEL = 256
     SEQ_LENGTH = 256
     BATCH_SIZE = 128
     PROBE_EPOCHS = 10
@@ -38,7 +38,7 @@ def run_probing_experiment():
     # ===================================================================
     # 2. Load and Freeze the Pre-trained Transformer
     # ===================================================================
-    transformer = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=4, num_layers=4).to(device)
+    transformer = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=8, num_layers=6, dim_feedforward=1024).to(device)
     
     # Load the weights you just trained
     checkpoint_path = "rule30_pretrained_new.pt"

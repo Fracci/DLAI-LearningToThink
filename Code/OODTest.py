@@ -11,7 +11,7 @@ def run_ood_length_test():
     # ---------------------------------------------------------
     # 1. Hyperparameters
     # ---------------------------------------------------------
-    D_MODEL = 128
+    D_MODEL = 256
     TRAIN_SEQ_LENGTH = 256          # What the model was trained on
     TEST_SEQ_LENGTH = 512           # The OOD Length (Double the size!)
     BATCH_SIZE = 128
@@ -24,7 +24,7 @@ def run_ood_length_test():
     # ---------------------------------------------------------
     # 2. Load the Pre-Trained Model
     # ---------------------------------------------------------
-    model = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=4, num_layers=4).to(device)
+    model = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=8, num_layers=6, dim_feedforward=1024).to(device)
     
     checkpoint_path = "rule30_pretrained_new.pt"
     try:
