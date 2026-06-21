@@ -41,7 +41,7 @@ def run_probing_experiment():
     transformer = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=4, num_layers=4).to(device)
     
     # Load the weights you just trained
-    checkpoint_path = "rule30_pretrained_gpu.pt"
+    checkpoint_path = "rule30_pretrained_new.pt"
     try:
         transformer.load_state_dict(torch.load(checkpoint_path, map_location=device))
         print("Successfully loaded pre-trained Transformer weights.")

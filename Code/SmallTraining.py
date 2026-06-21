@@ -111,7 +111,7 @@ def train_kaggle_gpu():
     # ---------------------------------------------------------
     # 5. Save the Checkpoint to Kaggle Output
     # ---------------------------------------------------------
-    checkpoint_path = "rule30_pretrained_gpu.pt"
+    checkpoint_path = "rule30_pretrained_new.pt"
     torch.save(model.state_dict(), checkpoint_path)
     
     elapsed_time = time.time() - start_time
