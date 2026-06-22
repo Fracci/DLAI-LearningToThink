@@ -1,17 +1,17 @@
 """
-Othello-GPT-style world-model probe for Rule 30 (fixed).
+Othello-GPT-style world-model probe for Rule 30 (alignment-corrected).
 
-Probes an INTERMEDIATE layer for a LATENT variable the model was never
-supervised on: the 3-cell neighborhood [left,center,right] (value 0-7) that
-*causes* each Rule-30 transition. Linear probe only. Random-init control =
-the trivially-decodable floor; the trained model must beat it.
+Key fix: the pretraining uses shifted targets (roll(shifts=1)), so the model's
+output at position i is conditioned on cells [i-2, i-1, i] -- it NEVER sees the
+right neighbor i+1. The textbook neighborhood [i-1, i, i+1] is therefore the
+WRONG probe target; the model was structurally prevented from representing it.
 
-Fixes vs the previous version:
-  - probe trains in fp32 (no autocast) -> avoids the fp16 collapse to ~50%
-  - features standardized per-dim before the linear probe
-  - lower LR + more epochs so the probe actually converges
-  - sweeps every layer in one run, reports trained-vs-random gap per layer
-  - flags the degenerate "locked on the output bit" 50% collapse if it recurs
+We probe for the neighborhood the model ACTUALLY conditions on:
+    MODEL_ALIGNED:  [i-2, i-1, i]   (value 0-7)   <- default, matches training
+    TEXTBOOK:       [i-1, i, i+1]   (value 0-7)   <- the causal rule, for contrast
+
+Both are latent variables never supervised. Linear probe only; random-init
+model = trivially-decodable floor. Per-class diagnostics expose any collapse.
 """
 import torch
 import torch.nn as nn
@@ -29,29 +29,38 @@ SEQ_LENGTH  = 256
 BATCH_SIZE  = 128
 PROBE_EPOCHS = 25
 LR = 3e-4
-PROBE_LAYERS = list(range(NUM_LAYERS))   # sweep 0..5
+PROBE_LAYERS = list(range(NUM_LAYERS))
+NEIGHBORHOOD = "model_aligned"   # "model_aligned" = [i-2,i-1,i] ; "textbook" = [i-1,i,i+1]
 # --------------
 
 
-def neighborhood_targets(state_t):
-    """Per-cell neighborhood 0..7 = 4*left + 2*center + 1*right (periodic).
-    Never a training target."""
-    left  = torch.roll(state_t, shifts=1,  dims=1)
-    right = torch.roll(state_t, shifts=-1, dims=1)
-    return (left * 4 + state_t * 2 + right * 1).long()
+def neighborhood_targets(state_t, mode):
+    """3-cell neighborhood value 0..7. Never a training target.
+    model_aligned: cells the shifted-target model actually conditions on.
+    textbook: the canonical Rule-30 [left,center,right]."""
+    if mode == "model_aligned":
+        c0 = torch.roll(state_t, shifts=2, dims=1)   # i-2
+        c1 = torch.roll(state_t, shifts=1, dims=1)   # i-1
+        c2 = state_t                                 # i
+    elif mode == "textbook":
+        c0 = torch.roll(state_t, shifts=1,  dims=1)  # i-1 (left)
+        c1 = state_t                                 # i   (center)
+        c2 = torch.roll(state_t, shifts=-1, dims=1)  # i+1 (right)
+    else:
+        raise ValueError(mode)
+    return (c0 * 4 + c1 * 2 + c2 * 1).long()
 
 
 def capture_layer(transformer, layer_idx):
     store = {}
     def hook(_m, _i, out):
-        store["h"] = out.detach().float()    # force fp32 features
+        store["h"] = out.detach().float()
     handle = transformer.transformer.layers[layer_idx].register_forward_hook(hook)
     return store, handle
 
 
 @torch.no_grad()
 def feature_stats(transformer, loader, layer_idx, device, n_batches=8):
-    """Mean/std per feature dim for standardization (computed once)."""
     store, handle = capture_layer(transformer, layer_idx)
     s = ssq = count = 0.0
     for i, (state_t, _) in enumerate(loader):
@@ -63,8 +72,7 @@ def feature_stats(transformer, loader, layer_idx, device, n_batches=8):
         s = s + f.sum(0); ssq = ssq + (f * f).sum(0); count += f.shape[0]
     handle.remove()
     mean = s / count
-    var = ssq / count - mean ** 2
-    std = torch.sqrt(var.clamp_min(1e-6))
+    std = torch.sqrt((ssq / count - mean ** 2).clamp_min(1e-6))
     return mean, std
 
 
@@ -78,46 +86,54 @@ def run_probe(transformer, device, layer_idx, tag):
     mean, std = feature_stats(transformer, loader, layer_idx, device)
 
     store, handle = capture_layer(transformer, layer_idx)
-    probe = nn.Linear(D_MODEL, 8).to(device)             # linear, 8-way
+    probe = nn.Linear(D_MODEL, 8).to(device)
     opt = AdamW(probe.parameters(), lr=LR, weight_decay=0.01)
     crit = nn.CrossEntropyLoss()
 
-    acc = 0.0
+    confusion = None
     for epoch in range(PROBE_EPOCHS):
         probe.train()
         correct = total = 0
+        confusion = torch.zeros(8, 8, dtype=torch.long)   # rows=true, cols=pred
         for state_t, _ in loader:
             state_t = state_t.to(device, non_blocking=True)
-            nbr = neighborhood_targets(state_t)
+            y = neighborhood_targets(state_t, NEIGHBORHOOD)
 
             with torch.no_grad(), autocast("cuda"):
                 _ = transformer(state_t)
-            f = (store["h"][:, 2:, :] - mean) / std       # standardized, fp32
-            y = nbr[:, 2:]
+            f = (store["h"][:, 2:, :] - mean) / std
+            yv = y[:, 2:]
 
             opt.zero_grad()
-            logits = probe(f)                             # fp32 probe (no autocast)
-            loss = crit(logits.reshape(-1, 8), y.reshape(-1))
+            logits = probe(f)
+            loss = crit(logits.reshape(-1, 8), yv.reshape(-1))
             loss.backward()
             opt.step()
 
             preds = torch.argmax(logits, dim=-1)
-            correct += (preds == y).sum().item()
-            total += y.numel()
-        acc = 100.0 * correct / total
-
+            correct += (preds == yv).sum().item()
+            total += yv.numel()
+            if epoch == PROBE_EPOCHS - 1:
+                p_flat = preds.reshape(-1).cpu()
+                y_flat = yv.reshape(-1).cpu()
+                confusion += torch.bincount(y_flat * 8 + p_flat, minlength=64).reshape(8, 8)
+    acc = 100.0 * correct / total
     handle.remove()
-    # collapse check: ~50% with only 2 predicted classes = locked on output bit
-    note = ""
-    if 48.0 <= acc <= 52.0:
-        note = "  (warning: near 50% -- check for output-bit collapse)"
-    print(f"  {tag:<16} layer {layer_idx} | neighborhood acc {acc:6.2f}%{note}")
+
+    n_pred_classes = int((confusion.sum(0) > 0).sum())
+    per_class = []
+    for c in range(8):
+        denom = confusion[c].sum().item()
+        per_class.append(100.0 * confusion[c, c].item() / denom if denom else 0.0)
+    flag = "  <-- COLLAPSE (few classes predicted)" if n_pred_classes <= 3 else ""
+    print(f"  {tag:<8} L{layer_idx} | acc {acc:6.2f}% | classes predicted: {n_pred_classes}/8{flag}")
+    print(f"           per-class acc: " + " ".join(f"{v:4.0f}" for v in per_class))
     return acc
 
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Rule-30 world-model probe on: {device}  (chance = 12.5%)\n")
+    print(f"Rule-30 probe | target = {NEIGHBORHOOD} neighborhood (0-7) | chance 12.5%\n")
 
     trained = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=NHEAD,
                                 num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
@@ -128,7 +144,6 @@ def main():
     rand = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=NHEAD,
                              num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
 
-    print("Per-layer linear-probe accuracy (neighborhood 0-7):")
     results = []
     for L in PROBE_LAYERS:
         at = run_probe(trained, device, L, "TRAINED")
@@ -142,10 +157,8 @@ def main():
         print(f"{L:<8}{at:>10.2f}{ar:>10.2f}{at-ar:>+10.2f}")
     best = max(results, key=lambda r: r[1] - r[2])
     print("=" * 56)
-    print(f"Largest gap at layer {best[0]}: trained {best[1]:.2f}% vs random {best[2]:.2f}% "
-          f"({best[1]-best[2]:+.2f} pts)")
-    print("A clear positive gap = the model explicitly, linearly represents the")
-    print("causal neighborhood it was never taught.")
+    print(f"Largest gap at layer {best[0]}: {best[1]:.2f}% vs {best[2]:.2f}% "
+          f"({best[1]-best[2]:+.2f} pts)  [target={NEIGHBORHOOD}]")
 
 
 if __name__ == "__main__":
