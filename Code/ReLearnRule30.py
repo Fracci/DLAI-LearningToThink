@@ -31,8 +31,8 @@ from Transformer import Rule30Transformer
 from Rule30Generator import Rule30Dataset
 
 # --- config ---
-A_AFTER = "modelA_phase5_final.pt"
-B_AFTER = "modelB_phase5_final.pt"
+A_AFTER = "modelA_phase5_epoch_1000.pt"
+B_AFTER = "modelB_phase5_epoch_1000.pt"
 
 D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
 SEQ_LEN     = 128
