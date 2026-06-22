@@ -24,8 +24,8 @@ from collections import defaultdict
 
 # --- edit checkpoint names if needed ---
 PRETRAINED = "rule30_pretrained_new.pt"
-A_AFTER    = "modelA_phase5_final.pt"
-B_AFTER    = "modelB_phase5_final.pt"
+A_AFTER    = "modelA_phase5_epoch_1000.pt"
+B_AFTER    = "modelB_phase5_epoch_1000.pt"
 # ---------------------------------------
 
 
