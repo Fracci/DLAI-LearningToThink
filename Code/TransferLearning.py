@@ -10,13 +10,16 @@ from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 def run_phase5_ab_test():
     # ---------------------------------------------------------
-    # 1. Setup & Hyperparameters
+    # 1. Setup & Hyperparameters (Scaled Architecture)
     # ---------------------------------------------------------
-    D_MODEL = 128
-    NHEAD = 4
-    NUM_LAYERS = 4
-    BATCH_SIZE = 128
-    EPOCHS = 3000        # Increased to allow the Grokking phase shift
+    D_MODEL = 256
+    NHEAD = 8
+    NUM_LAYERS = 6
+    DIM_FEEDFORWARD = 1024
+    
+    BATCH_SIZE = 256
+    EPOCHS = 3000        
+    WARMUP_EPOCHS = 50   # The embedding alignment phase
     MAX_SEQ_LEN = 128
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -41,47 +44,53 @@ def run_phase5_ab_test():
     ood_val_loader = DataLoader(ood_val_dataset, batch_size=BATCH_SIZE, pin_memory=True)
 
     # ---------------------------------------------------------
-    # 3. Model A: The Rule 30 Pre-Trained Engine
+    # 3. Model A: Pre-Trained Engine (With Freeze Protocol)
     # ---------------------------------------------------------
-    # We use the EXACT SAME architecture, just with a wider vocabulary
-    model_A = Rule30Transformer(vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD, num_layers=NUM_LAYERS).to(device)
+    model_A = Rule30Transformer(
+        vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD, 
+        num_layers=NUM_LAYERS, dim_feedforward=DIM_FEEDFORWARD
+    ).to(device)
     
     # Load the perfect Rule 30 weights
-    pretrained_path = "rule30_pretrained_gpu.pt"
+    pretrained_path = "rule30_pretrained_new.pt"
     pretrained_dict = torch.load(pretrained_path, map_location=device)
     
     # Filter out the old binary embeddings and output head
     filtered_dict = {k: v for k, v in pretrained_dict.items() if not k.startswith("embedding.") and not k.startswith("fc_out.")}
     model_A.load_state_dict(filtered_dict, strict=False)
-    print("Model A: Loaded Rule 30 Causal Attention Maps (Embeddings/Head re-initialized).")
+    print("Model A: Loaded Pre-Trained Weights.")
+
+    # FREEZE the core transformer layers for Warmup
+    for name, param in model_A.named_parameters():
+        if "transformer" in name or "final_norm" in name:
+            param.requires_grad = False
 
     # ---------------------------------------------------------
-    # 4. Model B: The Random Baseline
+    # 4. Model B: Random Baseline
     # ---------------------------------------------------------
-    model_B = Rule30Transformer(vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD, num_layers=NUM_LAYERS).to(device)
-    print("Model B: Initialized with completely random weights.")
+    model_B = Rule30Transformer(
+        vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD, 
+        num_layers=NUM_LAYERS, dim_feedforward=DIM_FEEDFORWARD
+    ).to(device)
+    print("Model B: Initialized with random weights.")
 
     # ---------------------------------------------------------
-    # 5. DIFFERENTIAL OPTIMIZATION (THE FIX)
+    # 4.5. Multi-GPU Configuration
+    # ---------------------------------------------------------
+    if torch.cuda.device_count() > 1:
+        print(f"Optimizing for {torch.cuda.device_count()} GPUs via DataParallel...")
+        model_A = nn.DataParallel(model_A)
+        model_B = nn.DataParallel(model_B)
+
+    # ---------------------------------------------------------
+    # 5. Optimization 
     # ---------------------------------------------------------
     criterion = nn.CrossEntropyLoss(ignore_index=tokenizer.pad_idx)
     
-    # Isolate Model A's new components vs pre-trained components
-    pretrained_params_A = []
-    new_params_A = []
-    for name, param in model_A.named_parameters():
-        if "embedding" in name or "fc_out" in name:
-            new_params_A.append(param)
-        else:
-            pretrained_params_A.append(param)
-            
-    # Protect the pre-trained "brain" with a tiny learning rate, but train the new head fast
-    opt_A = AdamW([
-        {'params': new_params_A, 'lr': 1e-3},          
-        {'params': pretrained_params_A, 'lr': 2e-5}    # 50x smaller LR!
-    ], weight_decay=0.1)
+    # Model A starts by only training the embeddings/head at a high learning rate
+    opt_A = AdamW(filter(lambda p: p.requires_grad, model_A.parameters()), lr=1e-3, weight_decay=0.1)
     
-    # Model B is entirely random, so it learns globally at a standard rate
+    # Model B trains end-to-end normally
     opt_B = AdamW(model_B.parameters(), lr=5e-4, weight_decay=0.1)
     
     scaler_A = GradScaler()
@@ -90,9 +99,18 @@ def run_phase5_ab_test():
     # ---------------------------------------------------------
     # 6. The A/B Training Loop
     # ---------------------------------------------------------
-    print("\nStarting A/B Training Loop (Protected Transfer)...")
+    print("\nStarting A/B Training Loop...")
     
     for epoch in range(EPOCHS):
+        
+        # --- STAGE 2 TRANSITION FOR MODEL A ---
+        if epoch == WARMUP_EPOCHS:
+            print("\n>>> WARMUP COMPLETE: Unfreezing Model A core layers for full end-to-end tuning. <<<")
+            for param in model_A.parameters():
+                param.requires_grad = True
+            # Re-initialize optimizer for Model A with a much lower learning rate for the entire network
+            opt_A = AdamW(model_A.parameters(), lr=5e-5, weight_decay=0.1)
+
         model_A.train()
         model_B.train()
         
@@ -157,15 +175,13 @@ def run_phase5_ab_test():
         acc_val_A = (val_correct_A / total_val_tokens) * 100
         acc_val_B = (val_correct_B / total_val_tokens) * 100
         
-        # Print every 5 epochs to keep the console clean
+        # Print every 5 epochs 
         if epoch % 5 == 0 or epoch == EPOCHS - 1:
-            print(f"Epoch [{epoch+1:3d}/{EPOCHS}]")
-            print(f"  Model A (Protected Rule 30) | Train: {acc_train_A:6.2f}% | OOD (5-digit): {acc_val_A:6.2f}%")
-            print(f"  Model B (Random Baseline)   | Train: {acc_train_B:6.2f}% | OOD (5-digit): {acc_val_B:6.2f}%")
+            stage_str = "[WARMUP]" if epoch < WARMUP_EPOCHS else "[TUNING]"
+            print(f"Epoch [{epoch+1:4d}/{EPOCHS}] {stage_str}")
+            print(f"  Model A (Pre-Trained) | Train: {acc_train_A:6.2f}% | OOD (5-digit): {acc_val_A:6.2f}%")
+            print(f"  Model B (Baseline)    | Train: {acc_train_B:6.2f}% | OOD (5-digit): {acc_val_B:6.2f}%")
             print("-" * 65)
-
-        if epoch % 100 == 0: 
-            torch.save(model_A.state_dict(), f"epochs/modelA_epoch_{epoch}.pt")
 
 if __name__ == "__main__":
     run_phase5_ab_test()
