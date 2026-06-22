@@ -25,7 +25,7 @@ SEEDS        = [0, 1, 2]
 EPOCHS       = 300
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5            # average EM over the last 50% of eval points per seed
-OOD_DIGITS   = [5, 6]           # the regime where the gap lives (add 5,7 if you want context)
+OOD_DIGITS   = [5, 6, 7]           # the regime where the gap lives (add 5,7 if you want context)
 
 D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
 BATCH_SIZE   = 256
