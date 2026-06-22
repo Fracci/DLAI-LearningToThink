@@ -1,135 +1,135 @@
+"""
+Othello-GPT-style world-model probe for Rule 30.
+
+Why this differs from a naive probe:
+  - The naive probe reads `final_norm` (one linear layer before the output)
+    and predicts state_{t+1} -- the SAME thing fc_out is trained to produce.
+    It is guaranteed to hit ~100% and proves nothing.
+  - Here we probe an INTERMEDIATE layer for a LATENT variable the model was
+    NEVER supervised on: the 3-cell neighborhood [left,center,right] (value 0-7)
+    that *causes* each Rule-30 transition. If a LINEAR probe recovers it, the
+    model explicitly represents the causal variables -> a genuine world model.
+
+Two controls make the number meaningful:
+  - linear probe only (a hidden layer could recompute the neighborhood itself)
+  - a RANDOM-init transformer probed the same way = the "trivially decodable"
+    floor. The trained model must beat this floor to claim anything.
+"""
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast
+from torch.amp import autocast
 
-# Import your custom modules
 from Transformer import Rule30Transformer
 from Rule30Generator import Rule30Dataset
 
-# ===================================================================
-# 1. Define the Shallow Probe Network
-# ===================================================================
-class ProbeMLP(nn.Module):
-    def __init__(self, d_model=128):
-        super().__init__()
-        # A tiny 2-layer network. It is mathematically too shallow 
-        # to compute Rule 30 across 256 tokens on its own.
-        self.net = nn.Sequential(
-            nn.Linear(d_model, d_model // 2),
-            nn.GELU(),
-            nn.Linear(d_model // 2, 2)  # Predicts 0 or 1
-        )
+# --- config ---
+CHECKPOINT  = "rule30_pretrained_new.pt"
+D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
+SEQ_LENGTH  = 256
+BATCH_SIZE  = 128
+PROBE_EPOCHS = 12
+PROBE_LAYER = 3          # intermediate layer (0..NUM_LAYERS-1). Try 2,3,4.
+LR = 1e-3
+# --------------
 
-    def forward(self, x):
-        return self.net(x)
 
-def run_probing_experiment():
-    # Hyperparameters
-    D_MODEL = 256
-    SEQ_LENGTH = 256
-    BATCH_SIZE = 128
-    PROBE_EPOCHS = 10
-    
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Initializing Probing Experiment on device: {device}")
+def neighborhood_targets(state_t):
+    """Per-cell 3-bit neighborhood value 0..7 = 4*left + 2*center + 1*right,
+    periodic boundaries -- matches Rule30Generator. NEVER a training target."""
+    left  = torch.roll(state_t, shifts=1,  dims=1)
+    right = torch.roll(state_t, shifts=-1, dims=1)
+    return (left * 4 + state_t * 2 + right * 1).long()   # (B, L) in [0,7]
 
-    # ===================================================================
-    # 2. Load and Freeze the Pre-trained Transformer
-    # ===================================================================
-    transformer = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=8, num_layers=6, dim_feedforward=1024).to(device)
-    
-    # Load the weights you just trained
-    checkpoint_path = "rule30_pretrained_new.pt"
-    try:
-        transformer.load_state_dict(torch.load(checkpoint_path, map_location=device))
-        print("Successfully loaded pre-trained Transformer weights.")
-    except Exception as e:
-        print(f"Error loading weights: {e}. Make sure you ran the training script first!")
-        return
 
-    # Freeze the Transformer! We do not want its weights to change.
+def capture_layer(transformer, layer_idx):
+    """Forward hook on the output of transformer.layers[layer_idx]."""
+    store = {}
+    def hook(_m, _i, out):
+        store["h"] = out.detach()
+    handle = transformer.transformer.layers[layer_idx].register_forward_hook(hook)
+    return store, handle
+
+
+def run_probe(transformer, device, tag):
     transformer.eval()
-    for param in transformer.parameters():
-        param.requires_grad = False
+    for p in transformer.parameters():
+        p.requires_grad = False
 
-    # ===================================================================
-    # 3. Setup the Forward Hook to Extract Hidden States
-    # ===================================================================
-    hidden_states = {}
-    
-    # This hook grabs the output of the final LayerNorm (the "internal brain state")
-    # right before it goes into the final vocabulary prediction head.
-    def get_activation(name):
-        def hook(model, input, output):
-            hidden_states[name] = output.detach() # Detach to prevent gradients flowing back
-        return hook
-        
-    transformer.final_norm.register_forward_hook(get_activation('final_norm'))
+    store, handle = capture_layer(transformer, PROBE_LAYER)
 
-    # ===================================================================
-    # 4. Initialize Probe and Data
-    # ===================================================================
-    probe = ProbeMLP(d_model=D_MODEL).to(device)
-    probe_optimizer = AdamW(probe.parameters(), lr=1e-3, weight_decay=0.01)
-    criterion = nn.CrossEntropyLoss()
+    # LINEAR probe, 8-way (no hidden layer, no nonlinearity)
+    probe = nn.Linear(D_MODEL, 8).to(device)
+    opt = AdamW(probe.parameters(), lr=LR, weight_decay=0.01)
+    crit = nn.CrossEntropyLoss()
 
-    # Generate completely new data that the Transformer has never seen
-    train_dataset = Rule30Dataset(num_samples=10000, seq_length=SEQ_LENGTH)
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
+    loader = DataLoader(Rule30Dataset(num_samples=10000, seq_length=SEQ_LENGTH),
+                        batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
 
-    # ===================================================================
-    # 5. Train the Probe
-    # ===================================================================
-    print("\nStarting Probe Training...")
-    
+    print(f"\n=== probing {tag} | layer {PROBE_LAYER} | target = neighborhood (0-7) ===")
     for epoch in range(PROBE_EPOCHS):
         probe.train()
-        total_loss = 0.0
-        correct_preds = 0
-        total_preds = 0
-        
-        for state_t, state_t_plus_1 in train_loader:
+        correct = total = 0
+        loss_sum = 0.0
+        for state_t, _ in loader:
             state_t = state_t.to(device, non_blocking=True)
-            state_t_plus_1 = state_t_plus_1.to(device, non_blocking=True)
-            
-            probe_optimizer.zero_grad()
-            
-            # 1. Pass data through the frozen Transformer
-            with torch.no_grad():
-                with autocast():
-                    _ = transformer(state_t) # We don't care about the logits
-                    
-            # 2. Extract the hidden states saved by our hook
-            # Shape: (batch_size, seq_len, d_model)
-            extracted_states = hidden_states['final_norm']
-            
-            # 3. Align the targets (same shifting logic as training)
-            shifted_targets = torch.roll(state_t_plus_1, shifts=1, dims=1)
-            
-            # 4. Slice off the first two causally blind tokens
-            states_valid = extracted_states[:, 2:, :]
-            targets_valid = shifted_targets[:, 2:]
-            
-            # 5. Pass states through the Probe
-            with autocast():
-                probe_logits = probe(states_valid)
-                loss = criterion(probe_logits.reshape(-1, 2), targets_valid.reshape(-1))
-                
-            loss.backward()
-            probe_optimizer.step()
-            
-            total_loss += loss.item()
-            preds = torch.argmax(probe_logits, dim=-1)
-            correct_preds += (preds == targets_valid).sum().item()
-            total_preds += targets_valid.numel()
-            
-        acc = (correct_preds / total_preds) * 100
-        print(f"Probe Epoch [{epoch+1}/{PROBE_EPOCHS}] | Loss: {total_loss/len(train_loader):.4f} | Probe Accuracy: {acc:.2f}%")
+            nbr = neighborhood_targets(state_t)            # latent label
 
-    print("\nProbing Test Complete.")
-    print("If the Probe Accuracy is >95%, the Transformer successfully built a causal world model!")
+            with torch.no_grad(), autocast("cuda"):
+                _ = transformer(state_t)
+            feats = store["h"]                             # (B, L, d_model)
+
+            # drop the 2 causally-blind edge tokens (as in training)
+            f = feats[:, 2:, :]
+            y = nbr[:, 2:]
+
+            opt.zero_grad()
+            with autocast("cuda"):
+                logits = probe(f)
+                loss = crit(logits.reshape(-1, 8), y.reshape(-1))
+            loss.backward()
+            opt.step()
+
+            preds = torch.argmax(logits, dim=-1)
+            correct += (preds == y).sum().item()
+            total += y.numel()
+            loss_sum += loss.item()
+
+        acc = 100.0 * correct / total
+        print(f"  epoch {epoch+1:2d}/{PROBE_EPOCHS} | loss {loss_sum/len(loader):.4f} | neighborhood acc {acc:6.2f}%")
+
+    handle.remove()
+    return acc
+
+
+def main():
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Rule-30 world-model probe on: {device}")
+
+    # trained model
+    trained = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=NHEAD,
+                                num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
+    sd = torch.load(CHECKPOINT, map_location=device)
+    sd = {k.replace("module.", ""): v for k, v in sd.items()}
+    trained.load_state_dict(sd)
+    acc_trained = run_probe(trained, device, "TRAINED model")
+
+    # random-init control (the trivially-decodable floor)
+    rand = Rule30Transformer(vocab_size=2, d_model=D_MODEL, nhead=NHEAD,
+                             num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
+    acc_random = run_probe(rand, device, "RANDOM-init control")
+
+    print("\n" + "=" * 60)
+    print(f"Neighborhood linear-probe accuracy @ layer {PROBE_LAYER}")
+    print(f"  trained model : {acc_trained:6.2f}%")
+    print(f"  random control: {acc_random:6.2f}%   (chance = 12.5%)")
+    print(f"  gap           : {acc_trained - acc_random:+6.2f} pts")
+    print("=" * 60)
+    print("A large gap above the random control = the model explicitly,")
+    print("linearly represents the causal neighborhood it was never taught.")
+    print("If trained ~= random, the model only computes the output, not a world model.")
+
 
 if __name__ == "__main__":
-    run_probing_experiment()
+    main()
