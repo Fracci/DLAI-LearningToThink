@@ -215,6 +215,7 @@ def run_phase5_ab_test():
         # Save intermediate checkpoints
         if epoch > WARMUP_EPOCHS and epoch % 100 == 0:
             torch.save(model_A.state_dict(), f"modelA_phase5_epoch_{epoch}.pt")
+            torch.save(model_B.state_dict(), f"modelB_phase5_epoch_{epoch}.pt")
 
 if __name__ == "__main__":
     run_phase5_ab_test()
