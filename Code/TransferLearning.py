@@ -175,13 +175,26 @@ def run_phase5_ab_test():
         acc_val_A = (val_correct_A / total_val_tokens) * 100
         acc_val_B = (val_correct_B / total_val_tokens) * 100
         
-        # Print every 5 epochs 
+        # Calculate average loss (Assuming you add total_loss tracking to your loops)
+        # Note: You must add `total_train_loss_A += loss_A.item()` inside your train loop, 
+        # and similarly calculate validation loss in your val loop for this to work.
+        
         if epoch % 5 == 0 or epoch == EPOCHS - 1:
             stage_str = "[WARMUP]" if epoch < WARMUP_EPOCHS else "[TUNING]"
             print(f"Epoch [{epoch+1:4d}/{EPOCHS}] {stage_str}")
-            print(f"  Model A (Pre-Trained) | Train: {acc_train_A:6.2f}% | OOD (5-digit): {acc_val_A:6.2f}%")
-            print(f"  Model B (Baseline)    | Train: {acc_train_B:6.2f}% | OOD (5-digit): {acc_val_B:6.2f}%")
-            print("-" * 65)
+            print(f"  Model A (Pre-Trained) | Train Acc: {acc_train_A:6.2f}% | OOD Val Acc: {acc_val_A:6.2f}%")
+            print(f"  Model B (Baseline)    | Train Acc: {acc_train_B:6.2f}% | OOD Val Acc: {acc_val_B:6.2f}%")
+            
+            # Qualitative Sample Print (Decoding the first item of the last validation batch)
+            print("  --- Sample Output (Model A) ---")
+            sample_input_len = (y_val[0] == tokenizer.char_to_idx['=']).nonzero(as_tuple=True)[0][0] + 1 if (y_val[0] == tokenizer.char_to_idx['=']).any() else 0
+            target_str = tokenizer.decode(y_val[0])
+            pred_str = tokenizer.decode(preds_val_A[0])
+            
+            # Truncate to just the mathematical output for clean reading
+            print(f"  Target: {target_str}")
+            print(f"  Pred A: {pred_str}")
+            print("-" * 80)
 
 if __name__ == "__main__":
     run_phase5_ab_test()
