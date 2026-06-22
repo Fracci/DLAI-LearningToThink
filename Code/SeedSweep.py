@@ -1,13 +1,18 @@
 """
-Multi-seed A/B comparison at 6-digit addition.
+Multi-seed A/B comparison: exact-match AND per-digit accuracy, in-distribution
+(3-4 digit) AND OOD lengths.
 
 For each seed: train Model A (pretrained init) and Model B (random init) on the
-SAME 3-4 digit scratchpad data with the IDENTICAL schedule (only init differs),
-and evaluate exact-match on a FIXED 6-digit OOD test set (same across all seeds).
+SAME 3-4 digit scratchpad data with the IDENTICAL schedule (only init differs).
+Every eval reports, for each eval set:
+    EM  = answer exact-match (all-or-nothing; the headline metric)
+    PD  = per-digit accuracy of the answer (partial credit; the diagnostic)
+Both are teacher-forced.
 
-Per seed, the score is the 6-digit EM averaged over a late training window (to
-cut per-epoch noise). Across seeds we report mean +/- std for A and B, and the
-paired gap (A - B) per seed -- the headline that turns n=1 into a real claim.
+Per seed -> late-window mean per metric. Across seeds -> mean +/- std and the
+paired gap (A - B). At the end of each seed, a right-aligned POSITIONAL answer
+accuracy (least-significant digit = position 0) is saved for the final models,
+to show where along the answer each model degrades.
 """
 import random
 import csv
@@ -24,8 +29,9 @@ from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 SEEDS        = [0, 1, 2]
 EPOCHS       = 300
 EVAL_EVERY   = 5
-LATE_FRAC    = 0.5            # average EM over the last 50% of eval points per seed
-OOD_DIGITS   = [5, 6]           # the regime where the gap lives (add 5,7 if you want context)
+LATE_FRAC    = 0.5            # average over the last 50% of eval points per seed
+OOD_DIGITS   = [5, 6]        # OOD lengths to track
+MAX_POS      = 12            # positional breakdown depth (answer digits, from LSB)
 
 D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
 BATCH_SIZE   = 256
@@ -34,7 +40,8 @@ OOD_MAX_SEQ_LEN = 160
 LR, WEIGHT_DECAY, GRAD_CLIP = 5e-4, 0.1, 1.0
 
 PRETRAINED   = "rule30_pretrained_new.pt"
-VAL_SEED     = 20240601       # fixed -> identical OOD test set across all seeds
+VAL_SEED     = 20240601       # fixed -> identical eval sets across all seeds
+N_ID_VAL     = 2000
 N_OOD_VAL    = 3000           # per length
 SAVE_CHECKPOINTS = True
 # ==================================================
@@ -53,35 +60,68 @@ def build_loss_targets(x, y, eq_idx, pad_idx):
     return torch.where(pos >= eq_col, y, torch.full_like(y, pad_idx))
 
 
-def answer_exact_match(preds, y, a_idx, pad_idx):
+def answer_region(y, a_idx, pad_idx):
+    """Boolean mask of the answer-digit positions (after 'A:')."""
     L = y.size(1)
     pos = torch.arange(L, device=y.device).unsqueeze(0)
     a_col = (y == a_idx).long().argmax(dim=1, keepdim=True)
-    ans = (pos >= (a_col + 2)) & (y != pad_idx)
-    ok = (preds == y) | (~ans)
-    row_ok = ok.all(dim=1) & ans.any(dim=1)
-    return row_ok.sum().item(), ans.any(dim=1).sum().item()
+    return (pos >= (a_col + 2)) & (y != pad_idx)
 
 
-def materialize_loader(tok, d, n, max_seq_len, seed, batch):
+def materialize_loader(tok, min_d, max_d, n, max_seq_len, seed, batch):
     random.seed(seed)
-    ds = ScratchpadAdditionDataset(num_samples=n, min_digits=d, max_digits=d,
+    ds = ScratchpadAdditionDataset(num_samples=n, min_digits=min_d, max_digits=max_d,
                                    tokenizer=tok, max_seq_len=max_seq_len)
     xs, ys = zip(*(ds[i] for i in range(n)))
     return DataLoader(TensorDataset(torch.stack(xs), torch.stack(ys)), batch_size=batch)
 
 
 @torch.no_grad()
-def eval_em(model, loader, a_idx, pad_idx, device):
+def eval_metrics(model, loader, a_idx, pad_idx, device):
+    """Returns (exact_match%, per_digit%). Teacher-forced."""
     model.eval()
-    correct = total = 0
+    em_correct = em_total = 0
+    dig_correct = dig_total = 0
     for x, y in loader:
         x = x.to(device, non_blocking=True); y = y.to(device, non_blocking=True)
         with autocast("cuda"):
-            logits = model(x)
-        c, n = answer_exact_match(torch.argmax(logits, -1), y, a_idx, pad_idx)
-        correct += c; total += n
-    return 100.0 * correct / total
+            preds = torch.argmax(model(x), dim=-1)
+        ans = answer_region(y, a_idx, pad_idx)
+        match = (preds == y)
+        # exact-match per row (all answer digits correct)
+        row_ok = (match | ~ans).all(dim=1) & ans.any(dim=1)
+        em_correct += row_ok.sum().item(); em_total += ans.any(dim=1).sum().item()
+        # per-digit (partial credit) over answer span
+        dig_correct += (match & ans).sum().item(); dig_total += ans.sum().item()
+    em = 100.0 * em_correct / em_total
+    pd = 100.0 * dig_correct / dig_total
+    return em, pd
+
+
+@torch.no_grad()
+def positional_accuracy(model, loader, a_idx, pad_idx, device, max_pos=MAX_POS):
+    """Right-aligned answer-digit accuracy: position 0 = least-significant digit."""
+    model.eval()
+    correct = torch.zeros(max_pos, dtype=torch.long)
+    total = torch.zeros(max_pos, dtype=torch.long)
+    for x, y in loader:
+        x = x.to(device, non_blocking=True); y = y.to(device, non_blocking=True)
+        with autocast("cuda"):
+            preds = torch.argmax(model(x), dim=-1)
+        ans = answer_region(y, a_idx, pad_idx)
+        match = (preds == y)
+        L = y.size(1)
+        col = torch.arange(L, device=y.device).unsqueeze(0).expand_as(y)
+        # last answer column per row -> distance from the right
+        last_col = torch.where(ans, col, torch.full_like(col, -1)).max(dim=1, keepdim=True).values
+        r = (last_col - col)                              # 0 at LSB, grows left
+        sel = ans & (r >= 0) & (r < max_pos)
+        rr = r[sel]; mm = match[sel]
+        total += torch.bincount(rr.cpu(), minlength=max_pos)
+        correct += torch.bincount(rr[mm].cpu(), minlength=max_pos)
+    acc = [(100.0 * correct[i].item() / total[i].item()) if total[i] > 0 else float("nan")
+           for i in range(max_pos)]
+    return acc
 
 
 def build_A(vocab, device):
@@ -98,9 +138,10 @@ def build_B(vocab, device):
     return Rule30Transformer(vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
 
 
-def train_one_seed(seed, ood_loaders, tok, device):
+def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
     set_seed(seed)
     PAD, EQ, A_IDX = tok.pad_idx, tok.char_to_idx["="], tok.char_to_idx["A"]
+    labels = list(eval_loaders.keys())
 
     train_ds = ScratchpadAdditionDataset(num_samples=15000, min_digits=3, max_digits=4,
                                          tokenizer=tok, max_seq_len=MAX_SEQ_LEN)
@@ -116,15 +157,16 @@ def train_one_seed(seed, ood_loaders, tok, device):
     opt_B = AdamW(model_B.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     sc_A, sc_B = GradScaler("cuda"), GradScaler("cuda")
 
-    history = {d: {"A": [], "B": []} for d in OOD_DIGITS}
-    # per-seed CSV log (loss is an instability-audit trail, not a result metric)
+    # history[label] = {A_em, A_pd, B_em, B_pd}
+    history = {lab: {"A_em": [], "A_pd": [], "B_em": [], "B_pd": []} for lab in labels}
+
+    # per-seed CSV log
     seed_log = open(f"seed{seed}_log.csv", "w", newline="")
-    seed_logger = csv.writer(seed_log)
-    seed_header = ["epoch", "loss_A", "loss_B"]
-    for d in OOD_DIGITS:
-        seed_header += [f"ood{d}_A", f"ood{d}_B"]
-    seed_logger.writerow(seed_header)
-    seed_log.flush()
+    slog = csv.writer(seed_log)
+    header = ["epoch", "loss_A", "loss_B"]
+    for lab in labels:
+        header += [f"{lab}_A_em", f"{lab}_B_em", f"{lab}_A_pd", f"{lab}_B_pd"]
+    slog.writerow(header); seed_log.flush()
 
     for epoch in range(EPOCHS):
         model_A.train(); model_B.train()
@@ -152,32 +194,39 @@ def train_one_seed(seed, ood_loaders, tok, device):
         if epoch % EVAL_EVERY == 0 or epoch == EPOCHS - 1:
             avg_A = loss_sum_A / len(train_loader)
             avg_B = loss_sum_B / len(train_loader)
-            line = f"  seed {seed} epoch {epoch+1:4d}/{EPOCHS} | loss A {avg_A:.4f} B {avg_B:.4f}"
+            print(f"  seed {seed} ep {epoch+1:4d}/{EPOCHS} | loss A {avg_A:.4f} B {avg_B:.4f}")
             row = [epoch + 1, f"{avg_A:.4f}", f"{avg_B:.4f}"]
-            for d in OOD_DIGITS:
-                a = eval_em(model_A, ood_loaders[d], A_IDX, PAD, device)
-                b = eval_em(model_B, ood_loaders[d], A_IDX, PAD, device)
-                history[d]["A"].append(a); history[d]["B"].append(b)
-                line += f" | {d}dig A {a:5.1f}% B {b:5.1f}%"
-                row += [f"{a:.2f}", f"{b:.2f}"]
-            print(line)
-            seed_logger.writerow(row); seed_log.flush()
+            for lab in labels:
+                a_em, a_pd = eval_metrics(model_A, eval_loaders[lab], A_IDX, PAD, device)
+                b_em, b_pd = eval_metrics(model_B, eval_loaders[lab], A_IDX, PAD, device)
+                history[lab]["A_em"].append(a_em); history[lab]["A_pd"].append(a_pd)
+                history[lab]["B_em"].append(b_em); history[lab]["B_pd"].append(b_pd)
+                print(f"     {lab:5s} | EM  A {a_em:5.1f} B {b_em:5.1f} "
+                      f"| PD  A {a_pd:5.1f} B {b_pd:5.1f}")
+                row += [f"{a_em:.2f}", f"{b_em:.2f}", f"{a_pd:.2f}", f"{b_pd:.2f}"]
+            slog.writerow(row); seed_log.flush()
 
     seed_log.close()
+
+    # end-of-seed positional breakdown (final models)
+    for lab in labels:
+        pa_A = positional_accuracy(model_A, eval_loaders[lab], A_IDX, PAD, device)
+        pa_B = positional_accuracy(model_B, eval_loaders[lab], A_IDX, PAD, device)
+        for p in range(MAX_POS):
+            pos_writer.writerow([seed, lab, "A", p, f"{pa_A[p]:.2f}"])
+            pos_writer.writerow([seed, lab, "B", p, f"{pa_B[p]:.2f}"])
 
     if SAVE_CHECKPOINTS:
         torch.save(model_A.state_dict(), f"seed{seed}_modelA.pt")
         torch.save(model_B.state_dict(), f"seed{seed}_modelB.pt")
 
-    # late-window mean per length
+    # late-window means per label and metric
     scores = {}
-    for d in OOD_DIGITS:
-        k = max(1, int(len(history[d]["A"]) * LATE_FRAC))
-        scores[d] = {
-            "A": sum(history[d]["A"][-k:]) / k,
-            "B": sum(history[d]["B"][-k:]) / k,
-        }
-    return scores, history
+    for lab in labels:
+        k = max(1, int(len(history[lab]["A_em"]) * LATE_FRAC))
+        scores[lab] = {m: sum(history[lab][m][-k:]) / k for m in
+                       ("A_em", "B_em", "A_pd", "B_pd")}
+    return scores
 
 
 def mean_std(xs):
@@ -189,41 +238,48 @@ def mean_std(xs):
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tok = CharTokenizer()
-    print(f"Multi-seed 6-digit A/B sweep on {device} | seeds={SEEDS} | epochs={EPOCHS}")
+    print(f"Multi-seed A/B sweep (EM + per-digit, ID + OOD) on {device} "
+          f"| seeds={SEEDS} | epochs={EPOCHS}")
 
-    # fixed OOD test sets (identical across all seeds)
-    ood_loaders = {d: materialize_loader(tok, d, N_OOD_VAL, OOD_MAX_SEQ_LEN,
-                                          seed=VAL_SEED + d, batch=BATCH_SIZE)
-                   for d in OOD_DIGITS}
+    # fixed eval sets: in-distribution (3-4) + each OOD length
+    eval_loaders = {"id": materialize_loader(tok, 3, 4, N_ID_VAL, MAX_SEQ_LEN,
+                                             seed=VAL_SEED, batch=BATCH_SIZE)}
+    for d in OOD_DIGITS:
+        eval_loaders[f"{d}dig"] = materialize_loader(tok, d, d, N_OOD_VAL, OOD_MAX_SEQ_LEN,
+                                                     seed=VAL_SEED + d, batch=BATCH_SIZE)
+    labels = list(eval_loaders.keys())
+
+    pos_file = open("positional_accuracy.csv", "w", newline="")
+    pos_writer = csv.writer(pos_file)
+    pos_writer.writerow(["seed", "eval_set", "model", "pos_from_LSB", "accuracy"])
 
     per_seed = {}
     for s in SEEDS:
         print(f"\n========== SEED {s} ==========")
-        scores, _ = train_one_seed(s, ood_loaders, tok, device)
-        per_seed[s] = scores
-        for d in OOD_DIGITS:
-            print(f"  seed {s} late-window {d}dig: A {scores[d]['A']:.2f}%  "
-                  f"B {scores[d]['B']:.2f}%  gap {scores[d]['A']-scores[d]['B']:+.2f}")
+        per_seed[s] = train_one_seed(s, eval_loaders, tok, device, pos_writer)
+        pos_file.flush()
+    pos_file.close()
 
-    print("\n" + "=" * 60)
+    # aggregate
+    print("\n" + "=" * 72)
     print("AGGREGATE (mean +/- std across seeds)")
-    rows = [["digits", "A_mean", "A_std", "B_mean", "B_std", "gap_mean", "gap_std"]]
-    for d in OOD_DIGITS:
-        A = [per_seed[s][d]["A"] for s in SEEDS]
-        B = [per_seed[s][d]["B"] for s in SEEDS]
-        gaps = [a - b for a, b in zip(A, B)]
-        Am, As = mean_std(A); Bm, Bs = mean_std(B); Gm, Gs = mean_std(gaps)
-        print(f"  {d}-digit | A {Am:6.2f} +/- {As:4.2f} | B {Bm:6.2f} +/- {Bs:4.2f} "
-              f"| gap {Gm:+6.2f} +/- {Gs:4.2f}")
-        if Gs > 1e-9 and len(SEEDS) > 1:
-            t = Gm / (Gs / (len(SEEDS) ** 0.5))
-            print(f"            paired gap t-stat ~ {t:+.2f} (n={len(SEEDS)}; small-n, interpret loosely)")
-        rows.append([d, f"{Am:.2f}", f"{As:.2f}", f"{Bm:.2f}", f"{Bs:.2f}", f"{Gm:.2f}", f"{Gs:.2f}"])
-    print("=" * 60)
+    rows = [["eval_set", "metric", "A_mean", "A_std", "B_mean", "B_std", "gap_mean", "gap_std"]]
+    for lab in labels:
+        for metric, ak, bk in (("EM", "A_em", "B_em"), ("PD", "A_pd", "B_pd")):
+            A = [per_seed[s][lab][ak] for s in SEEDS]
+            B = [per_seed[s][lab][bk] for s in SEEDS]
+            gaps = [a - b for a, b in zip(A, B)]
+            Am, As = mean_std(A); Bm, Bs = mean_std(B); Gm, Gs = mean_std(gaps)
+            print(f"  {lab:5s} {metric} | A {Am:6.2f} +/- {As:4.2f} | B {Bm:6.2f} +/- {Bs:4.2f} "
+                  f"| gap {Gm:+6.2f} +/- {Gs:4.2f}")
+            rows.append([lab, metric, f"{Am:.2f}", f"{As:.2f}", f"{Bm:.2f}", f"{Bs:.2f}",
+                         f"{Gm:.2f}", f"{Gs:.2f}"])
+        print()
+    print("=" * 72)
 
     with open("seed_sweep_summary.csv", "w", newline="") as f:
         csv.writer(f).writerows(rows)
-    print("saved -> seed_sweep_summary.csv")
+    print("saved -> seed_sweep_summary.csv, positional_accuracy.csv, seed{N}_log.csv")
 
 
 if __name__ == "__main__":
