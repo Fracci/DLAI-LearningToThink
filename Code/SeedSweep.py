@@ -25,7 +25,7 @@ SEEDS        = [0, 1, 2]
 EPOCHS       = 300
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5            # average EM over the last 50% of eval points per seed
-OOD_DIGITS   = [5, 6, 7]           # the regime where the gap lives (add 5,7 if you want context)
+OOD_DIGITS   = [6]           # the regime where the gap lives (add 5,7 if you want context)
 
 D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
 BATCH_SIZE   = 256
@@ -117,8 +117,18 @@ def train_one_seed(seed, ood_loaders, tok, device):
     sc_A, sc_B = GradScaler("cuda"), GradScaler("cuda")
 
     history = {d: {"A": [], "B": []} for d in OOD_DIGITS}
+    # per-seed CSV log (loss is an instability-audit trail, not a result metric)
+    seed_log = open(f"seed{seed}_log.csv", "w", newline="")
+    seed_logger = csv.writer(seed_log)
+    seed_header = ["epoch", "loss_A", "loss_B"]
+    for d in OOD_DIGITS:
+        seed_header += [f"ood{d}_A", f"ood{d}_B"]
+    seed_logger.writerow(seed_header)
+    seed_log.flush()
+
     for epoch in range(EPOCHS):
         model_A.train(); model_B.train()
+        loss_sum_A = loss_sum_B = 0.0
         for x, y in train_loader:
             x = x.to(device, non_blocking=True); y = y.to(device, non_blocking=True)
             yl = build_loss_targets(x, y, EQ, PAD)
@@ -129,6 +139,7 @@ def train_one_seed(seed, ood_loaders, tok, device):
             sc_A.scale(lA).backward(); sc_A.unscale_(opt_A)
             nn.utils.clip_grad_norm_(model_A.parameters(), GRAD_CLIP)
             sc_A.step(opt_A); sc_A.update()
+            loss_sum_A += lA.item()
 
             opt_B.zero_grad()
             with autocast("cuda"):
@@ -136,15 +147,23 @@ def train_one_seed(seed, ood_loaders, tok, device):
             sc_B.scale(lB).backward(); sc_B.unscale_(opt_B)
             nn.utils.clip_grad_norm_(model_B.parameters(), GRAD_CLIP)
             sc_B.step(opt_B); sc_B.update()
+            loss_sum_B += lB.item()
 
         if epoch % EVAL_EVERY == 0 or epoch == EPOCHS - 1:
-            line = f"  seed {seed} epoch {epoch+1:4d}/{EPOCHS}"
+            avg_A = loss_sum_A / len(train_loader)
+            avg_B = loss_sum_B / len(train_loader)
+            line = f"  seed {seed} epoch {epoch+1:4d}/{EPOCHS} | loss A {avg_A:.4f} B {avg_B:.4f}"
+            row = [epoch + 1, f"{avg_A:.4f}", f"{avg_B:.4f}"]
             for d in OOD_DIGITS:
                 a = eval_em(model_A, ood_loaders[d], A_IDX, PAD, device)
                 b = eval_em(model_B, ood_loaders[d], A_IDX, PAD, device)
                 history[d]["A"].append(a); history[d]["B"].append(b)
                 line += f" | {d}dig A {a:5.1f}% B {b:5.1f}%"
+                row += [f"{a:.2f}", f"{b:.2f}"]
             print(line)
+            seed_logger.writerow(row); seed_log.flush()
+
+    seed_log.close()
 
     if SAVE_CHECKPOINTS:
         torch.save(model_A.state_dict(), f"seed{seed}_modelA.pt")
