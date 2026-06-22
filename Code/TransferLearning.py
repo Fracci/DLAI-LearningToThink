@@ -106,9 +106,9 @@ def run_phase5_ab_test():
         # --- STAGE 2 TRANSITION FOR MODEL A ---
         if epoch == WARMUP_EPOCHS:
             print("\n>>> WARMUP COMPLETE: Unfreezing Model A core layers for full end-to-end tuning. <<<")
+            # Unfreeze all parameters, automatically bypassing the 'module.' wrapper if using DataParallel
             for param in model_A.parameters():
                 param.requires_grad = True
-            # Re-initialize optimizer for Model A with a much lower learning rate for the entire network
             opt_A = AdamW(model_A.parameters(), lr=5e-5, weight_decay=0.1)
 
         model_A.train()
@@ -116,6 +116,10 @@ def run_phase5_ab_test():
         
         train_correct_A = 0; train_correct_B = 0
         total_train_tokens = 0
+        
+        # Initialize loss trackers
+        total_train_loss_A = 0.0
+        total_train_loss_B = 0.0
         
         for x, y in train_loader:
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
@@ -132,6 +136,7 @@ def run_phase5_ab_test():
             
             preds_A = torch.argmax(logits_A, dim=-1)
             train_correct_A += (preds_A[valid_mask] == y[valid_mask]).sum().item()
+            total_train_loss_A += loss_A.item()
             
             # --- Train Model B ---
             opt_B.zero_grad()
@@ -144,6 +149,7 @@ def run_phase5_ab_test():
             
             preds_B = torch.argmax(logits_B, dim=-1)
             train_correct_B += (preds_B[valid_mask] == y[valid_mask]).sum().item()
+            total_train_loss_B += loss_B.item()
             
             total_train_tokens += valid_mask.sum().item()
 
@@ -153,19 +159,31 @@ def run_phase5_ab_test():
         val_correct_A = 0; val_correct_B = 0
         total_val_tokens = 0
         
+        # Initialize validation loss trackers
+        total_val_loss_A = 0.0
+        total_val_loss_B = 0.0
+        
         with torch.no_grad():
             for x_val, y_val in ood_val_loader:
                 x_val, y_val = x_val.to(device, non_blocking=True), y_val.to(device, non_blocking=True)
                 valid_mask_val = (y_val != tokenizer.pad_idx)
                 
                 with autocast():
+                    # Evaluate Model A
                     logits_val_A = model_A(x_val)
+                    loss_val_A = criterion(logits_val_A.reshape(-1, VOCAB_SIZE), y_val.reshape(-1))
                     preds_val_A = torch.argmax(logits_val_A, dim=-1)
-                    val_correct_A += (preds_val_A[valid_mask_val] == y_val[valid_mask_val]).sum().item()
                     
+                    val_correct_A += (preds_val_A[valid_mask_val] == y_val[valid_mask_val]).sum().item()
+                    total_val_loss_A += loss_val_A.item()
+                    
+                    # Evaluate Model B
                     logits_val_B = model_B(x_val)
+                    loss_val_B = criterion(logits_val_B.reshape(-1, VOCAB_SIZE), y_val.reshape(-1))
                     preds_val_B = torch.argmax(logits_val_B, dim=-1)
+                    
                     val_correct_B += (preds_val_B[valid_mask_val] == y_val[valid_mask_val]).sum().item()
+                    total_val_loss_B += loss_val_B.item()
                     
                 total_val_tokens += valid_mask_val.sum().item()
 
@@ -175,26 +193,28 @@ def run_phase5_ab_test():
         acc_val_A = (val_correct_A / total_val_tokens) * 100
         acc_val_B = (val_correct_B / total_val_tokens) * 100
         
-        # Calculate average loss (Assuming you add total_loss tracking to your loops)
-        # Note: You must add `total_train_loss_A += loss_A.item()` inside your train loop, 
-        # and similarly calculate validation loss in your val loop for this to work.
+        # Calculate Average Losses
+        avg_train_loss_A = total_train_loss_A / len(train_loader)
+        avg_train_loss_B = total_train_loss_B / len(train_loader)
+        avg_val_loss_A = total_val_loss_A / len(ood_val_loader)
+        avg_val_loss_B = total_val_loss_B / len(ood_val_loader)
         
         if epoch % 5 == 0 or epoch == EPOCHS - 1:
             stage_str = "[WARMUP]" if epoch < WARMUP_EPOCHS else "[TUNING]"
             print(f"Epoch [{epoch+1:4d}/{EPOCHS}] {stage_str}")
-            print(f"  Model A (Pre-Trained) | Train Acc: {acc_train_A:6.2f}% | OOD Val Acc: {acc_val_A:6.2f}%")
-            print(f"  Model B (Baseline)    | Train Acc: {acc_train_B:6.2f}% | OOD Val Acc: {acc_val_B:6.2f}%")
+            print(f"  Model A | Train Loss: {avg_train_loss_A:.4f} | Val Loss: {avg_val_loss_A:.4f} | Train Acc: {acc_train_A:6.2f}% | Val Acc: {acc_val_A:6.2f}%")
+            print(f"  Model B | Train Loss: {avg_train_loss_B:.4f} | Val Loss: {avg_val_loss_B:.4f} | Train Acc: {acc_train_B:6.2f}% | Val Acc: {acc_val_B:6.2f}%")
             
-            # Qualitative Sample Print (Decoding the first item of the last validation batch)
             print("  --- Sample Output (Model A) ---")
-            sample_input_len = (y_val[0] == tokenizer.char_to_idx['=']).nonzero(as_tuple=True)[0][0] + 1 if (y_val[0] == tokenizer.char_to_idx['=']).any() else 0
             target_str = tokenizer.decode(y_val[0])
             pred_str = tokenizer.decode(preds_val_A[0])
-            
-            # Truncate to just the mathematical output for clean reading
             print(f"  Target: {target_str}")
             print(f"  Pred A: {pred_str}")
-            print("-" * 80)
+            print("-" * 90)
+        
+        # Save intermediate checkpoints
+        if epoch > WARMUP_EPOCHS and epoch % 100 == 0:
+            torch.save(model_A.state_dict(), f"modelA_phase5_epoch_{epoch}.pt")
 
 if __name__ == "__main__":
     run_phase5_ab_test()
