@@ -37,8 +37,8 @@ BATCH_SIZE  = 128
 ITERS_PER_EPOCH = 80
 PROBE_EPOCHS = 25
 LR = 3e-4
-PROBE_LAYER = 3                  # intermediate layer (0..5). Try 2,3,4.
-TARGET = "prev_row_neighborhood" # or "cell_above"
+PROBE_LAYER = 5             # intermediate layer (0..5). Try 2,3,4.
+TARGET = "cell_above" # or "cell_above"
 RULE_LUT = torch.tensor([0, 1, 1, 1, 1, 0, 0, 0], dtype=torch.long)
 # --------------
 
