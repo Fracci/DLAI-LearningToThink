@@ -39,7 +39,7 @@ MAX_SEQ_LEN  = 128
 OOD_MAX_SEQ_LEN = 160
 LR, WEIGHT_DECAY, GRAD_CLIP = 5e-4, 0.1, 1.0
 
-PRETRAINED   = "rule30_pretrained_new.pt"
+PRETRAINED   = "rule30_rollout_pretrained.pt"
 VAL_SEED     = 20240601       # fixed -> identical eval sets across all seeds
 N_ID_VAL     = 2000
 N_OOD_VAL    = 3000           # per length
