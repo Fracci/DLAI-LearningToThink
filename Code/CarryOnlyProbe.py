@@ -30,7 +30,8 @@ from CarryOnlyGenerator import sample_ab, assemble, VOCAB, IGNORE
 CHECKPOINT  = "carryonly_pretrained.pt"
 D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
 MIN_N, MAX_N = 8, 24
-PROP_MIN, PROP_MAX = 0.3, 0.95
+CHAIN_MAX = 12              # must match pretraining
+TARGET_ACTIVE = 0.25       # must match pretraining (balanced labels)
 MAX_LEN = 3 * MAX_N + 2
 BATCH_SIZE  = 128
 ITERS_PER_EPOCH = 80
@@ -46,7 +47,7 @@ def make_batch(bs, device):
     for _ in range(bs):
         import random
         n = random.randint(MIN_N, MAX_N)
-        a, b = sample_ab(n, PROP_MIN, PROP_MAX)
+        a, b = sample_ab(n, CHAIN_MAX, TARGET_ACTIVE)
         seq, tgt = assemble(a, b, MAX_LEN, latent=TARGET)
         seqs.append(seq); targs.append(tgt)
     return torch.stack(seqs).to(device), torch.stack(targs).to(device)
