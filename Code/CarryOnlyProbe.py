@@ -38,7 +38,7 @@ ITERS_PER_EPOCH = 80
 PROBE_EPOCHS = 25
 LR = 3e-4
 PROBE_LAYER = 3
-TARGET = "carry_in"              # "carry_in" (2-way) or "gen_dist" (6-way)
+TARGET = "gen_dist"              # "carry_in" (2-way) or "gen_dist" (6-way)
 # --------------
 
 
