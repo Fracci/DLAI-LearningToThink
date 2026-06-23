@@ -1,11 +1,11 @@
 """
-Pre-training on the multi-step Rule 30 ROLLOUT task.
+Pre-training on the multi-step Rule 30 ROLLOUT task (multi-GPU).
 
 Identical architecture to the single-step Rule 30 model (so transfer is a clean
-apples-to-apples swap: only the pretraining TASK changes). The resulting
-checkpoint drops straight into SeedSweep's build_A -- just point PRETRAINED at
-'rule30_rollout_pretrained.pt' (build_A keeps transformer.* / final_norm.* and
-re-initializes the vocab-specific embedding/head).
+apples-to-apples swap: only the pretraining TASK changes). Uses both Kaggle GPUs
+via nn.DataParallel when available. The saved checkpoint drops straight into
+SeedSweep's build_A (which strips the 'module.' prefix and keeps transformer.* /
+final_norm.*) -- just point PRETRAINED at 'rule30_rollout_pretrained.pt'.
 """
 import torch
 import torch.nn as nn
@@ -27,17 +27,22 @@ def train_rollout():
     MIN_N, MAX_N = 16, 32                # variable period -> forces content-based induction
     ROWS = 8                             # propagation steps; max seq length = MAX_N*ROWS = 256
 
-    BATCH_SIZE = 128
+    BATCH_SIZE = 256                     # larger batch to feed 2 GPUs
     EPOCHS = 300
     NUM_SAMPLES = 20000
     LR, WEIGHT_DECAY, GRAD_CLIP = 1e-3, 0.2, 1.0
+    PRINT_EVERY = 5
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Rollout pre-training on {device} | period {MIN_N}-{MAX_N} | rows {ROWS} "
-          f"| max_len {MAX_N*ROWS}")
+    n_gpu = torch.cuda.device_count()
+    print(f"Rollout pre-training on {device} ({n_gpu} GPU(s)) | period {MIN_N}-{MAX_N} "
+          f"| rows {ROWS} | max_len {MAX_N*ROWS} | batch {BATCH_SIZE}")
 
     model = Rule30Transformer(vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD,
                               num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
+    if n_gpu > 1:
+        print(f"Using {n_gpu} GPUs via DataParallel.")
+        model = nn.DataParallel(model)
 
     dataset = Rule30RolloutDataset(NUM_SAMPLES, MIN_N, MAX_N, ROWS, pad_idx=PAD_IDX)
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True,
@@ -48,15 +53,14 @@ def train_rollout():
     scaler = GradScaler("cuda")
 
     start = time.time()
-    model.train()
     for epoch in range(EPOCHS):
+        model.train()
         total_loss = 0.0
         correct = total = 0
         for x, y, mask in loader:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
-            # mask row-0 + pad: set those targets to PAD so CE ignores them
             y_loss = torch.where(mask, y, torch.full_like(y, PAD_IDX))
 
             optimizer.zero_grad()
@@ -73,11 +77,14 @@ def train_rollout():
             correct += ((preds == y) & mask).sum().item()
             total += mask.sum().item()
 
-        if epoch % 5 == 0 or epoch == EPOCHS - 1:
+        if epoch % PRINT_EVERY == 0 or epoch == EPOCHS - 1:
+            elapsed = (time.time() - start) / 60
             print(f"Epoch [{epoch+1:3d}/{EPOCHS}] | Loss {total_loss/len(loader):.4f} "
-                  f"| Rollout next-token acc {100.0*correct/total:.2f}%")
+                  f"| Rollout next-token acc {100.0*correct/total:6.2f}% | {elapsed:5.1f} min")
 
-    torch.save(model.state_dict(), "rule30_rollout_pretrained.pt")
+    # unwrap DataParallel before saving so the checkpoint has clean keys
+    to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
+    torch.save(to_save, "rule30_rollout_pretrained.pt")
     print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved rule30_rollout_pretrained.pt")
 
 

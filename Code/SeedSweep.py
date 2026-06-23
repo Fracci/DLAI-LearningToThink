@@ -30,7 +30,7 @@ SEEDS        = [0, 1, 2]
 EPOCHS       = 300
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5            # average over the last 50% of eval points per seed
-OOD_DIGITS   = [5, 6]        # OOD lengths to track
+OOD_DIGITS   = [5, 6, 7]        # OOD lengths to track
 MAX_POS      = 12            # positional breakdown depth (answer digits, from LSB)
 
 D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
