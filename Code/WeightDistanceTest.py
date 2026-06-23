@@ -23,9 +23,9 @@ import torch.nn.functional as F
 from collections import defaultdict
 
 # --- edit checkpoint names if needed ---
-PRETRAINED = "rule30_pretrained_new.pt"
-A_AFTER    = "modelA_phase5_epoch_1000.pt"
-B_AFTER    = "modelB_phase5_epoch_1000.pt"
+PRETRAINED = "rule30_rollout_pretrained.pt"
+A_AFTER    = "seed0_modelA.pt"
+B_AFTER    = "seed0_modelB.pt"
 # ---------------------------------------
 
 
@@ -105,11 +105,11 @@ def main():
         print("  => A is about as close to the pretrained init as B is:")
         print("     consistent with heavy forgetting (benefit, if any, is basin-level).")
 
-    with open("weight_distance.csv", "w", newline="") as f:
+    with open("weight_distance0.csv", "w", newline="") as f:
         w = csv.writer(f)
         w.writerow(["param", "cos_A_pre", "cos_B_pre", "cos_A_B", "relL2_A_pre"])
         w.writerows(rows)
-    print("\nsaved -> weight_distance.csv")
+    print("\nsaved -> weight_distance0.csv")
 
 
 if __name__ == "__main__":
