@@ -24,7 +24,7 @@ from Transformer import Rule30Transformer
 from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # ===================== CONFIG =====================
-SEEDS        = [0, 1, 2, 3, 4]
+SEEDS        = [2, 3, 4]
 EPOCHS       = 300
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5
