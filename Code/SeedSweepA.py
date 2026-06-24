@@ -24,7 +24,7 @@ from Transformer import Rule30Transformer
 from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # ===================== CONFIG =====================
-SEEDS        = [0, 1, 2]
+SEEDS        = [0, 1, 2, 3, 4]
 EPOCHS       = 300
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5
@@ -45,8 +45,13 @@ SAVE_CHECKPOINTS = True
 
 # --- reusing a previously-trained B ---
 USE_STORED_B = True
-B_LOG_DIR    = "."          # folder holding the seed{N}_log.csv from B's original arm
-OUT_TAG      = "carry"      # prefix for this arm's output files
+# Folder + filename pattern of the FULL A/B run whose B you are reusing.
+# Those logs are named "seed{N}_log.csv" and DO contain {lab}_B_em / {lab}_B_pd
+# columns. This must NOT point at this script's own A-only logs (which have no B).
+B_LOG_DIR    = "b_logs"        # e.g. the folder with the Rule30/rollout seed{N}_log.csv
+B_LOG_PATTERN= "seed{seed}_log.csv"
+B_SEEDS_AVAIL= [0, 1, 2]       # seeds for which a trained-B log actually exists
+OUT_TAG      = "carry"         # prefix for THIS arm's (A-only) output files
 # ==================================================
 
 
@@ -128,9 +133,23 @@ def build_B(vocab, device):
 
 
 def load_stored_B(seed, labels):
-    """Read B's per-seed late-window means from a previously saved seed{N}_log.csv."""
-    path = os.path.join(B_LOG_DIR, f"seed{seed}_log.csv")
+    """Read B's per-seed late-window means from a FULL A/B run's seed{N}_log.csv.
+    Returns None (with a warning) if no B log exists for this seed, so seeds
+    without a trained B simply report A-only."""
+    if seed not in B_SEEDS_AVAIL:
+        print(f"    [B] no stored B for seed {seed} (available: {B_SEEDS_AVAIL}); "
+              f"reporting A-only for this seed.")
+        return None
+    path = os.path.join(B_LOG_DIR, B_LOG_PATTERN.format(seed=seed))
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"B log not found: {path}. Point B_LOG_DIR at the folder holding the "
+            f"full A/B run's seed{{N}}_log.csv (NOT this arm's '{OUT_TAG}_seed*_log.csv').")
     rows = list(csv.DictReader(open(path)))
+    if not rows or f"{labels[0]}_B_em" not in rows[0]:
+        raise KeyError(
+            f"{path} has no B columns (looked for '{labels[0]}_B_em'). This is "
+            f"probably an A-only log. Use the original full A/B run's logs.")
     out = {}
     for lab in labels:
         em = [float(r[f"{lab}_B_em"]) for r in rows]
@@ -207,8 +226,11 @@ def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
     for lab in labels:
         k = max(1, int(len(history[lab]["A_em"]) * LATE_FRAC))
         scores[lab] = {m: sum(history[lab][m][-k:]) / k for m in ("A_em", "A_pd")}
-        if USE_STORED_B:
-            scores[lab].update(load_stored_B(seed, labels)[lab])
+    if USE_STORED_B:
+        b = load_stored_B(seed, labels)        # None if no B for this seed
+        if b is not None:
+            for lab in labels:
+                scores[lab].update(b[lab])
     return scores
 
 
@@ -244,19 +266,24 @@ def main():
     print("\n" + "=" * 72)
     print("AGGREGATE (mean +/- std across seeds)" + ("" if USE_STORED_B else "  [A only]"))
     rows = [["eval_set", "metric", "A_mean", "A_std", "B_mean", "B_std", "gap_mean", "gap_std"]]
+    paired = [s for s in SEEDS if all("B_em" in per_seed[s][lab] for lab in labels)]
+    if USE_STORED_B and paired and paired != SEEDS:
+        print(f"  (gap computed over seeds with a stored B: {paired}; "
+              f"A stats over all {SEEDS})")
     for lab in labels:
         for metric, ak, bk in (("EM", "A_em", "B_em"), ("PD", "A_pd", "B_pd")):
             A = [per_seed[s][lab][ak] for s in SEEDS]
-            if USE_STORED_B:
-                B = [per_seed[s][lab][bk] for s in SEEDS]
-                gaps = [a - b for a, b in zip(A, B)]
-                Am, As = mean_std(A); Bm, Bs = mean_std(B); Gm, Gs = mean_std(gaps)
+            Am, As = mean_std(A)
+            if USE_STORED_B and paired:
+                Ap = [per_seed[s][lab][ak] for s in paired]
+                B  = [per_seed[s][lab][bk] for s in paired]
+                gaps = [a - b for a, b in zip(Ap, B)]
+                Bm, Bs = mean_std(B); Gm, Gs = mean_std(gaps)
                 print(f"  {lab:5s} {metric} | A {Am:6.2f} +/- {As:4.2f} | B {Bm:6.2f} +/- {Bs:4.2f} "
-                      f"| gap {Gm:+6.2f} +/- {Gs:4.2f}")
+                      f"| gap {Gm:+6.2f} +/- {Gs:4.2f}  (n_gap={len(paired)})")
                 rows.append([lab, metric, f"{Am:.2f}", f"{As:.2f}", f"{Bm:.2f}", f"{Bs:.2f}",
                              f"{Gm:.2f}", f"{Gs:.2f}"])
             else:
-                Am, As = mean_std(A)
                 print(f"  {lab:5s} {metric} | A {Am:6.2f} +/- {As:4.2f}")
                 rows.append([lab, metric, f"{Am:.2f}", f"{As:.2f}", "", "", "", ""])
         print()
