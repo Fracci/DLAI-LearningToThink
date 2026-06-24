@@ -24,7 +24,7 @@ from Transformer import Rule30Transformer
 from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # ===================== CONFIG =====================
-SEEDS        = [2, 3, 4]
+SEEDS        = [3, 4]
 EPOCHS       = 300
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5
@@ -289,10 +289,10 @@ def main():
         print()
     print("=" * 72)
 
-    with open(f"{OUT_TAG}_seed_sweep_summary.csv", "w", newline="") as f:
-        csv.writer(f).writerows(rows)
-    print(f"saved -> {OUT_TAG}_seed_sweep_summary.csv, {OUT_TAG}_positional_accuracy.csv, "
-          f"{OUT_TAG}_seed{{N}}_log.csv")
+    #with open(f"{OUT_TAG}_seed_sweep_summary.csv", "w", newline="") as f:
+    #    csv.writer(f).writerows(rows)
+    #print(f"saved -> {OUT_TAG}_seed_sweep_summary.csv, {OUT_TAG}_positional_accuracy.csv, "
+    #      f"{OUT_TAG}_seed{{N}}_log.csv")
 
 
 if __name__ == "__main__":
