@@ -24,7 +24,7 @@ from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # ===================== CONFIG =====================
 SEEDS        = [0, 1, 2, 3, 4]
-EPOCHS       = 1            # use 1 only for a quick smoke test
+EPOCHS       = 300            # use 1 only for a quick smoke test
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5
 OOD_DIGITS   = [5, 6, 7]
