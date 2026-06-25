@@ -24,8 +24,8 @@ from Transformer import Rule30Transformer
 from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # ===================== CONFIG =====================
-SEEDS        = [3, 4]
-EPOCHS       = 300
+SEEDS        = [0, 1, 2, 3, 4]
+EPOCHS       = 1
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5
 OOD_DIGITS   = [5, 6, 7]
@@ -37,7 +37,7 @@ MAX_SEQ_LEN  = 128
 OOD_MAX_SEQ_LEN = 160
 LR, WEIGHT_DECAY, GRAD_CLIP = 5e-4, 0.1, 1.0
 
-PRETRAINED   = "carryonly_pretrained.pt"
+PRETRAINED   = "rule30_pretrained_new.pt"
 VAL_SEED     = 20240601
 N_ID_VAL     = 2000
 N_OOD_VAL    = 3000
@@ -50,8 +50,8 @@ USE_STORED_B = True
 # columns. This must NOT point at this script's own A-only logs (which have no B).
 B_LOG_DIR    = "b_logs"        # e.g. the folder with the Rule30/rollout seed{N}_log.csv
 B_LOG_PATTERN= "seed{seed}_log.csv"
-B_SEEDS_AVAIL= [0, 1, 2]       # seeds for which a trained-B log actually exists
-OUT_TAG      = "carry"         # prefix for THIS arm's (A-only) output files
+B_SEEDS_AVAIL= [0, 1, 2, 3, 4]       # seeds for which a trained-B log actually exists
+OUT_TAG      = "Rule30"         # prefix for THIS arm's (A-only) output files
 # ==================================================
 
 
