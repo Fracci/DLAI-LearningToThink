@@ -1,19 +1,18 @@
 """
-A-ONLY multi-seed sweep (reuses a previously-trained Model B).
+A-ONLY multi-seed sweep.
 
-Model B (random init) is identical across pretraining arms -- it never touches
-the pretrained weights -- so it only needs to be trained once. This script trains
-and evaluates ONLY Model A, while still CONSTRUCTING (but not training) Model B so
-the RNG stream, A's initialization, and the training-data order are byte-identical
-to the full A/B run. Verified by matching first-epoch A metrics.
+Trains and evaluates ONLY Model A (pretrained init), but still CONSTRUCTS (never
+trains) Model B so the RNG stream, A's initialization, and the training-data
+order stay byte-identical to the full A/B run. This is what makes A's numbers
+here directly comparable to a separately-trained B.
 
-B's numbers are read back from a previously saved per-seed log (seed{N}_log.csv
-from the arm where B was trained) to compute the paired gap. Point B_LOG_DIR at
-that arm's logs. If you only want A's curves, set USE_STORED_B = False.
+This version does NOT load any stored B -- it just produces A's per-seed logs,
+positional breakdown, checkpoints, and an A-only summary. To get the A-vs-B gap,
+combine these A logs with the B columns from the full A/B run's seed{N}_log.csv
+afterwards (offline merge), once those B logs exist.
 """
 import random
 import csv
-import os
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -25,7 +24,7 @@ from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # ===================== CONFIG =====================
 SEEDS        = [0, 1, 2, 3, 4]
-EPOCHS       = 1
+EPOCHS       = 1            # use 1 only for a quick smoke test
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5
 OOD_DIGITS   = [5, 6, 7]
@@ -42,16 +41,7 @@ VAL_SEED     = 20240601
 N_ID_VAL     = 2000
 N_OOD_VAL    = 3000
 SAVE_CHECKPOINTS = True
-
-# --- reusing a previously-trained B ---
-USE_STORED_B = True
-# Folder + filename pattern of the FULL A/B run whose B you are reusing.
-# Those logs are named "seed{N}_log.csv" and DO contain {lab}_B_em / {lab}_B_pd
-# columns. This must NOT point at this script's own A-only logs (which have no B).
-B_LOG_DIR    = "b_logs"        # e.g. the folder with the Rule30/rollout seed{N}_log.csv
-B_LOG_PATTERN= "seed{seed}_log.csv"
-B_SEEDS_AVAIL= [0, 1, 2, 3, 4]       # seeds for which a trained-B log actually exists
-OUT_TAG      = "Rule30"         # prefix for THIS arm's (A-only) output files
+OUT_TAG      = "Rule30"       # prefix for this arm's output files
 # ==================================================
 
 
@@ -129,34 +119,8 @@ def build_A(vocab, device):
 
 
 def build_B(vocab, device):
+    # constructed for RNG parity with the full A/B run; never trained
     return Rule30Transformer(vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
-
-
-def load_stored_B(seed, labels):
-    """Read B's per-seed late-window means from a FULL A/B run's seed{N}_log.csv.
-    Returns None (with a warning) if no B log exists for this seed, so seeds
-    without a trained B simply report A-only."""
-    if seed not in B_SEEDS_AVAIL:
-        print(f"    [B] no stored B for seed {seed} (available: {B_SEEDS_AVAIL}); "
-              f"reporting A-only for this seed.")
-        return None
-    path = os.path.join(B_LOG_DIR, B_LOG_PATTERN.format(seed=seed))
-    if not os.path.exists(path):
-        raise FileNotFoundError(
-            f"B log not found: {path}. Point B_LOG_DIR at the folder holding the "
-            f"full A/B run's seed{{N}}_log.csv (NOT this arm's '{OUT_TAG}_seed*_log.csv').")
-    rows = list(csv.DictReader(open(path)))
-    if not rows or f"{labels[0]}_B_em" not in rows[0]:
-        raise KeyError(
-            f"{path} has no B columns (looked for '{labels[0]}_B_em'). This is "
-            f"probably an A-only log. Use the original full A/B run's logs.")
-    out = {}
-    for lab in labels:
-        em = [float(r[f"{lab}_B_em"]) for r in rows]
-        pd = [float(r[f"{lab}_B_pd"]) for r in rows]
-        k = max(1, int(len(em) * LATE_FRAC))
-        out[lab] = {"B_em": sum(em[-k:]) / k, "B_pd": sum(pd[-k:]) / k}
-    return out
 
 
 def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
@@ -168,10 +132,10 @@ def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
                                          tokenizer=tok, max_seq_len=MAX_SEQ_LEN)
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
 
-    # IMPORTANT: build A then B in the SAME order as the full run, so the RNG
-    # stream and A's init are byte-identical. B is constructed but NOT trained.
+    # build A then B in the SAME order as the full run, so the RNG stream and A's
+    # init are byte-identical. B is constructed but NOT trained (RNG parity only).
     model_A = build_A(tok.vocab_size, device)
-    _model_B_unused = build_B(tok.vocab_size, device)   # RNG parity only; never used
+    _model_B_unused = build_B(tok.vocab_size, device)
     del _model_B_unused
     if torch.cuda.device_count() > 1:
         model_A = nn.DataParallel(model_A)
@@ -226,11 +190,6 @@ def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
     for lab in labels:
         k = max(1, int(len(history[lab]["A_em"]) * LATE_FRAC))
         scores[lab] = {m: sum(history[lab][m][-k:]) / k for m in ("A_em", "A_pd")}
-    if USE_STORED_B:
-        b = load_stored_B(seed, labels)        # None if no B for this seed
-        if b is not None:
-            for lab in labels:
-                scores[lab].update(b[lab])
     return scores
 
 
@@ -242,8 +201,7 @@ def mean_std(xs):
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tok = CharTokenizer()
-    print(f"A-ONLY sweep on {device} | seeds={SEEDS} | epochs={EPOCHS} "
-          f"| B reused={USE_STORED_B} from '{B_LOG_DIR}'")
+    print(f"A-ONLY sweep on {device} | seeds={SEEDS} | epochs={EPOCHS} | tag={OUT_TAG}")
 
     eval_loaders = {"id": materialize_loader(tok, 3, 4, N_ID_VAL, MAX_SEQ_LEN,
                                              seed=VAL_SEED, batch=BATCH_SIZE)}
@@ -263,36 +221,24 @@ def main():
         pos_file.flush()
     pos_file.close()
 
-    print("\n" + "=" * 72)
-    print("AGGREGATE (mean +/- std across seeds)" + ("" if USE_STORED_B else "  [A only]"))
-    rows = [["eval_set", "metric", "A_mean", "A_std", "B_mean", "B_std", "gap_mean", "gap_std"]]
-    paired = [s for s in SEEDS if all("B_em" in per_seed[s][lab] for lab in labels)]
-    if USE_STORED_B and paired and paired != SEEDS:
-        print(f"  (gap computed over seeds with a stored B: {paired}; "
-              f"A stats over all {SEEDS})")
+    print("\n" + "=" * 60)
+    print("AGGREGATE — A only (mean +/- std across seeds)")
+    rows = [["eval_set", "metric", "A_mean", "A_std"]]
     for lab in labels:
-        for metric, ak, bk in (("EM", "A_em", "B_em"), ("PD", "A_pd", "B_pd")):
+        for metric, ak in (("EM", "A_em"), ("PD", "A_pd")):
             A = [per_seed[s][lab][ak] for s in SEEDS]
             Am, As = mean_std(A)
-            if USE_STORED_B and paired:
-                Ap = [per_seed[s][lab][ak] for s in paired]
-                B  = [per_seed[s][lab][bk] for s in paired]
-                gaps = [a - b for a, b in zip(Ap, B)]
-                Bm, Bs = mean_std(B); Gm, Gs = mean_std(gaps)
-                print(f"  {lab:5s} {metric} | A {Am:6.2f} +/- {As:4.2f} | B {Bm:6.2f} +/- {Bs:4.2f} "
-                      f"| gap {Gm:+6.2f} +/- {Gs:4.2f}  (n_gap={len(paired)})")
-                rows.append([lab, metric, f"{Am:.2f}", f"{As:.2f}", f"{Bm:.2f}", f"{Bs:.2f}",
-                             f"{Gm:.2f}", f"{Gs:.2f}"])
-            else:
-                print(f"  {lab:5s} {metric} | A {Am:6.2f} +/- {As:4.2f}")
-                rows.append([lab, metric, f"{Am:.2f}", f"{As:.2f}", "", "", "", ""])
+            print(f"  {lab:5s} {metric} | A {Am:6.2f} +/- {As:4.2f}")
+            rows.append([lab, metric, f"{Am:.2f}", f"{As:.2f}"])
         print()
-    print("=" * 72)
+    print("=" * 60)
+    print("To get the A-vs-B gap, merge these A logs with the B columns from the "
+          "full A/B run's seed{N}_log.csv offline.")
 
-    #with open(f"{OUT_TAG}_seed_sweep_summary.csv", "w", newline="") as f:
-    #    csv.writer(f).writerows(rows)
-    #print(f"saved -> {OUT_TAG}_seed_sweep_summary.csv, {OUT_TAG}_positional_accuracy.csv, "
-    #      f"{OUT_TAG}_seed{{N}}_log.csv")
+    with open(f"{OUT_TAG}_seed_sweep_summary.csv", "w", newline="") as f:
+        csv.writer(f).writerows(rows)
+    print(f"saved -> {OUT_TAG}_seed_sweep_summary.csv, {OUT_TAG}_positional_accuracy.csv, "
+          f"{OUT_TAG}_seed{{N}}_log.csv")
 
 
 if __name__ == "__main__":
