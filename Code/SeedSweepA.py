@@ -24,7 +24,7 @@ from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # ===================== CONFIG =====================
 SEEDS        = [0, 1, 2, 3, 4]
-EPOCHS       = 300            # use 1 only for a quick smoke test
+EPOCHS       = 300           
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5
 OOD_DIGITS   = [5, 6, 7]
@@ -36,12 +36,12 @@ MAX_SEQ_LEN  = 128
 OOD_MAX_SEQ_LEN = 160
 LR, WEIGHT_DECAY, GRAD_CLIP = 5e-4, 0.1, 1.0
 
-PRETRAINED   = "rule30_pretrained_new.pt"
+PRETRAINED   = "carryonly_pretrained.pt"
 VAL_SEED     = 20240601
 N_ID_VAL     = 2000
 N_OOD_VAL    = 3000
 SAVE_CHECKPOINTS = True
-OUT_TAG      = "Rule30"       # prefix for this arm's output files
+OUT_TAG      = "carryonly"       # prefix for this arm's output files
 # ==================================================
 
 
