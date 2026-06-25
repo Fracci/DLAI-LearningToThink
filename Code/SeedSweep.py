@@ -26,7 +26,7 @@ from Transformer import Rule30Transformer
 from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # ===================== CONFIG =====================
-SEEDS        = [0, 1, 2]
+SEEDS        = [3, 4]
 EPOCHS       = 300
 EVAL_EVERY   = 5
 LATE_FRAC    = 0.5            # average over the last 50% of eval points per seed
@@ -39,7 +39,7 @@ MAX_SEQ_LEN  = 128
 OOD_MAX_SEQ_LEN = 160
 LR, WEIGHT_DECAY, GRAD_CLIP = 5e-4, 0.1, 1.0
 
-PRETRAINED   = "carryonly_pretrained.pt"
+PRETRAINED   = "rule30_rollout_pretrained.pt"
 VAL_SEED     = 20240601       # fixed -> identical eval sets across all seeds
 N_ID_VAL     = 2000
 N_OOD_VAL    = 3000           # per length
