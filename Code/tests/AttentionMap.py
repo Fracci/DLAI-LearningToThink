@@ -4,11 +4,18 @@ import torch
 import matplotlib
 matplotlib.use("Agg")         
 import matplotlib.pyplot as plt
+import os
+import sys
 
-from Transformer import GeneralTransformer
-from ArithmeticDataset import CharTokenizer
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.abspath(os.path.join(current_dir, ".."))
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
 
-# CONFIG  — edit these, then just run the file (no command-line args)
+from src.Transformer import GeneralTransformer
+from src.ArithmeticDataset import CharTokenizer
+
+# CONFIG
 LAYER = 0   # change to change the layer
 EXPR  = "456+129=C0:6+9=5,C1:5+2=8,C0:4+1=5,A:585"
 

@@ -1,24 +1,3 @@
-"""
-TEST 1 — Did Model A forget its pretraining?  (5-seed version)
-
-Compares the transformer-body weights of, per seed:
-  - pretrained  = A's initialization (one shared checkpoint)
-  - A_after     = fine-tuned on arithmetic, started from pretrained
-  - B_after     = fine-tuned on arithmetic, started from random
-
-Logic: gradient descent does not permute neurons, so a model stays
-directionally correlated with its OWN init. B never saw the pretrained
-weights, so cos(B_after, pretrained) is the "unrelated model" baseline.
-
-  cos(A,pre) >> cos(B,pre)  -> pretraining retained
-  cos(A,pre) ~= cos(B,pre)  -> heavy forgetting (benefit is basin-level)
-
-Runs every seed, reports per-layer cosines averaged over seeds (mean +/- std),
-and the global headline number averaged over seeds.
-
-Only transformer.* and final_norm.* are compared (embedding/fc_out are
-re-initialized for the new vocab). No model class or GPU needed.
-"""
 import csv
 import os
 import torch
@@ -28,7 +7,7 @@ from collections import defaultdict
 # CONFIG
 PRETRAINED   = "carryonly_pretrained.pt"     
 SEEDS        = [0, 1, 2, 3, 4]
-A_PATTERN    = "Weights/carryonly_seed{seed}_modelA.pt"
+A_PATTERN    = "Weights/Carryonly_seed{seed}_modelA.pt"
 B_PATTERN    = "Weights/seed{seed}_modelB.pt"    
 OUT_CSV      = "weight_distance_carryonly.csv"
 

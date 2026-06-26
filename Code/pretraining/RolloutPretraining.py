@@ -4,9 +4,16 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
 import time
+import os
+import sys
 
-from Transformer import GeneralTransformer
-from RolloutGenerator import Rule30RolloutDataset, PAD_IDX
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.abspath(os.path.join(current_dir, ".."))
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
+from src.Transformer import GeneralTransformer
+from data_generation.RolloutGenerator import Rule30RolloutDataset, PAD_IDX
 
 
 def train_rollout():

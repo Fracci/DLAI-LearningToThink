@@ -5,9 +5,16 @@ import time
 import torch
 import torch.nn as nn
 from torch.amp import autocast
+import os
+import sys
 
-from Transformer import GeneralTransformer
-from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.abspath(os.path.join(current_dir, ".."))
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
+from src.Transformer import GeneralTransformer
+from src.ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # CONFIG
 D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
@@ -19,10 +26,10 @@ VAL_SEED     = 20240601
 WEIGHTS_DIR  = "Weights"       
 
 CHECKPOINTS = {
-    "Rule30": "Rule30_seed{seed}_modelA.pt",
+    #"Rule30": "Rule30_seed{seed}_modelA.pt",
     "Rollout": "Rollout_seed{seed}_modelA.pt",
     "Carry":   "Carryonly_seed{seed}_modelA.pt",
-    "Baseline": "seed{seed}_modelB.pt",
+    #"Baseline": "seed{seed}_modelB.pt",
 }
 SEEDS = [0, 1, 2, 3, 4]
 OUT_CSV = "freerun_results.csv"

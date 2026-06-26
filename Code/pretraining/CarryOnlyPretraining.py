@@ -4,11 +4,18 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
 import time
-
-from Transformer import GeneralTransformer
-from CarryOnlyGenerator import (CarryOnlyDataset, compute_carry, assemble,
-                                 sample_ab, VOCAB, IGNORE)
 import random
+import os
+import sys
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.abspath(os.path.join(current_dir, ".."))
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
+from src.Transformer import GeneralTransformer
+from data_generation.CarryOnlyGenerator import (CarryOnlyDataset, compute_carry, assemble,
+                                 sample_ab, VOCAB, IGNORE)
 
 
 def make_eval_batch(bs, min_n, max_n, chain_max, target_active, max_len, device):
