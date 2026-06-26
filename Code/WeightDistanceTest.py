@@ -26,12 +26,12 @@ import torch.nn.functional as F
 from collections import defaultdict
 
 # ---------------- config ----------------
-PRETRAINED   = "rule30_pretrained_new.pt"      # A's init for THIS arm
+PRETRAINED   = "carryonly_pretrained.pt"      # A's init for THIS arm
 SEEDS        = [0, 1, 2, 3, 4]
 # filename patterns; {seed} is filled in. Edit to match your saved checkpoints.
-A_PATTERN    = "Weights/Rule30_seed{seed}_modelA.pt"
+A_PATTERN    = "Weights/carryonly_seed{seed}_modelA.pt"
 B_PATTERN    = "Weights/seed{seed}_modelB.pt"          # B from the full A/B run (any arm; B is shared)
-OUT_CSV      = "weight_distance_rule30.csv"
+OUT_CSV      = "weight_distance_carryonly.csv"
 # ----------------------------------------
 
 
