@@ -23,6 +23,7 @@ is a pure error-accumulation signature (no late-window vs snapshot confound).
 import random
 import csv
 import os
+import time
 import torch
 import torch.nn as nn
 from torch.amp import autocast
@@ -124,7 +125,9 @@ def eval_freerun(model, tok, d, n_eval, device, seed):
     model.eval()
     random.seed(VAL_SEED + d)          # same fixed problems across all models/seeds
     correct = total = parseable = 0
-    for _ in range(n_eval):
+    t0 = time.time()
+    report_every = max(1, n_eval // 4)   # ~4 progress lines per length
+    for i in range(n_eval):
         n1 = random.randint(10 ** (d - 1), 10 ** d - 1)
         n2 = random.randint(10 ** (d - 1), 10 ** d - 1)
         prompt_ids, truth = build_prompt_and_truth(tok, n1, n2, GEN_MAX_SEQ_LEN)
@@ -135,6 +138,14 @@ def eval_freerun(model, tok, d, n_eval, device, seed):
             parseable += 1
         if pred == truth:
             correct += 1
+        if (i + 1) % report_every == 0 or (i + 1) == n_eval:
+            el = time.time() - t0
+            rate = (i + 1) / el
+            eta = (n_eval - (i + 1)) / rate if rate > 0 else 0.0
+            print(f"        free-run {d}dig: {i+1}/{n_eval} "
+                  f"({100.0*(i+1)/n_eval:4.0f}%) | {rate:4.1f} ex/s "
+                  f"| elapsed {el:5.1f}s | ETA {eta:5.1f}s "
+                  f"| EM-so-far {100.0*correct/total:4.1f}%", flush=True)
     return (100.0 * correct / total, 100.0 * parseable / total)
 
 
@@ -164,6 +175,11 @@ def main():
     print(f"Free-running (greedy) eval on {device} | {N_EVAL}/length | "
           f"max_new={MAX_NEW_TOKENS}\n")
 
+    t_start = time.time()
+    n_jobs = len(CHECKPOINTS) * len(SEEDS) * len(OOD_DIGITS)
+    print(f"Planned: {len(CHECKPOINTS)} models x {len(SEEDS)} seeds x "
+          f"{len(OOD_DIGITS)} lengths = {n_jobs} free-run evaluations "
+          f"({N_EVAL} examples each)\n", flush=True)
     rows = [["model", "seed", "digits", "freerun_EM", "parseable_pct",
              "teacherforced_EM_sameckpt", "drop_TF_minus_free"]]
     agg = {}      # (model,d) -> list of free-run EM over seeds
@@ -175,8 +191,11 @@ def main():
             if not os.path.exists(path):
                 print(f"  [skip] {label} seed {s}: {path} not found")
                 continue
+            print(f"\n[{time.strftime('%H:%M:%S')}] loading {label} seed {s}: {path}", flush=True)
+            tck = time.time()
             model = load_model(path, tok.vocab_size, device)
             for d in OOD_DIGITS:
+                td = time.time()
                 em, parse = eval_freerun(model, tok, d, N_EVAL, device, s)
                 tf_em = eval_teacher_forced_matched(model, tok, d, N_EVAL, device)
                 drop = (tf_em - em) if tf_em == tf_em else float("nan")  # nan-safe
@@ -185,7 +204,9 @@ def main():
                 agg.setdefault((label, d), []).append(em)
                 agg_tf.setdefault((label, d), []).append(tf_em)
                 print(f"  {label:9s} seed {s} {d}dig | free-run EM {em:5.1f}% "
-                      f"| TF EM {tf_em:5.1f}% | drop {drop:5.1f} | parseable {parse:5.1f}%")
+                      f"| TF EM {tf_em:5.1f}% | drop {drop:5.1f} | parseable {parse:5.1f}% "
+                      f"| {time.time()-td:5.1f}s for this length", flush=True)
+            print(f"  [{label} seed {s}] done in {time.time()-tck:5.1f}s", flush=True)
             del model
             if device.type == "cuda":
                 torch.cuda.empty_cache()
@@ -219,6 +240,7 @@ def main():
     with open(OUT_CSV.replace(".csv", "_summary.csv"), "w", newline="") as f:
         csv.writer(f).writerows(summary)
     print(f"\nsaved -> {OUT_CSV}, {OUT_CSV.replace('.csv','_summary.csv')}")
+    print(f"total wall-clock: {(time.time()-t_start)/60:.1f} min", flush=True)
 
 
 if __name__ == "__main__":
