@@ -14,24 +14,22 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from src.Transformer import GeneralTransformer
+from config import FinetuneConfig, OOD_DIGITS, SEEDS
 from src.ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # CONFIG
-D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
-OOD_DIGITS   = [5, 6, 7]
 N_EVAL       = 400              
 MAX_NEW_TOKENS = 140           
 GEN_MAX_SEQ_LEN = 200          
-VAL_SEED     = 20240601
+VAL_SEED     = FinetuneConfig.val_seed
 WEIGHTS_DIR  = "Weights"       
 
 CHECKPOINTS = {
     #"Rule30": "Rule30_seed{seed}_modelA.pt",
-    "Rollout": "Rollout_seed{seed}_modelA.pt",
-    "Carry":   "Carryonly_seed{seed}_modelA.pt",
+    #"Rollout": "Rollout_seed{seed}_modelA.pt",
+    "Carry":   "carryonly_seed{seed}_modelA.pt",
     #"Baseline": "seed{seed}_modelB.pt",
 }
-SEEDS = [0, 1, 2, 3, 4]
 OUT_CSV = "freerun_results.csv"
 
 
@@ -152,7 +150,7 @@ def load_model(path, vocab, device):
     if ckpt_vocab != vocab:
         print(f"    [note] checkpoint vocab={ckpt_vocab} != tokenizer vocab={vocab}; "
               f"building model with {ckpt_vocab} to match the checkpoint.")
-    m = GeneralTransformer(ckpt_vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
+    m = GeneralTransformer(ckpt_vocab, FinetuneConfig.d_model, FinetuneConfig.n_heads, FinetuneConfig.n_layers, FinetuneConfig.dim_feedforward).to(device)
     m.load_state_dict(sd)              # full fine-tuned model -> strict load
     return m
 

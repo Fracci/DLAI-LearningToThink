@@ -14,8 +14,9 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from src.Transformer import GeneralTransformer
+from config import ModelConfig, EVAL_EVERY, CARRYONLY_WEIGHTS
 from data_generation.CarryOnlyGenerator import (CarryOnlyDataset, compute_carry, assemble,
-                                 sample_ab, VOCAB, IGNORE)
+                                 sample_ab, VOCAB, IGNORE, TARGET_ACTIVE)
 
 
 def make_eval_batch(bs, min_n, max_n, chain_max, target_active, max_len, device):
@@ -62,43 +63,35 @@ def evaluate(model, device, cfg, n_batches=8, long_thresh=5):
 
 
 def train_carry():
-    D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
     MIN_N, MAX_N = 8, 24
     CHAIN_MAX = 12
-    TARGET_ACTIVE = 0.25
     LONG_THRESH = 5
-
-    BATCH_SIZE = 256
-    EPOCHS = 300
-    NUM_SAMPLES = 20000
-    LR, WEIGHT_DECAY, GRAD_CLIP = 1e-3, 0.2, 1.0
-    PRINT_EVERY = 5
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_gpu = torch.cuda.device_count()
     max_len = 3 * MAX_N + 2
     print(f"Carry-only pre-training on {device} ({n_gpu} GPU) | n {MIN_N}-{MAX_N} "
-          f"| chain_max {CHAIN_MAX} | active {TARGET_ACTIVE} | batch {BATCH_SIZE}")
+          f"| chain_max {CHAIN_MAX} | active {TARGET_ACTIVE} | batch {ModelConfig.batch_size}")
 
-    model = GeneralTransformer(vocab_size=VOCAB, d_model=D_MODEL, nhead=NHEAD,
-                              num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
+    model = GeneralTransformer(vocab_size=VOCAB, d_model=ModelConfig.d_model, nhead=ModelConfig.n_heads,
+                              num_layers=ModelConfig.n_layers, dim_feedforward=ModelConfig.dim_feedforward).to(device)
     if n_gpu > 1:
         print(f"Using {n_gpu} GPUs via DataParallel.")
         model = nn.DataParallel(model)
 
-    ds = CarryOnlyDataset(NUM_SAMPLES, MIN_N, MAX_N, CHAIN_MAX, TARGET_ACTIVE)
-    loader = DataLoader(ds, batch_size=BATCH_SIZE, shuffle=True,
+    ds = CarryOnlyDataset(ModelConfig.num_samples, MIN_N, MAX_N, CHAIN_MAX, TARGET_ACTIVE)
+    loader = DataLoader(ds, batch_size=ModelConfig.batch_size, shuffle=True,
                         pin_memory=True, num_workers=2)
 
     criterion = nn.CrossEntropyLoss(ignore_index=IGNORE)
-    optimizer = AdamW(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
+    optimizer = AdamW(model.parameters(), lr=ModelConfig.lr, weight_decay=ModelConfig.weight_decay)
     scaler = GradScaler("cuda")
 
     eval_cfg = dict(bs=256, min_n=MIN_N, max_n=MAX_N, chain_max=CHAIN_MAX,
                     target_active=TARGET_ACTIVE, max_len=max_len)
 
     start = time.time()
-    for epoch in range(EPOCHS):
+    for epoch in range(ModelConfig.epochs):
         model.train()
         total_loss = 0.0
         for seq, target in loader:
@@ -110,21 +103,21 @@ def train_carry():
                 loss = criterion(logits.reshape(-1, VOCAB), target.reshape(-1))
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
-            nn.utils.clip_grad_norm_(model.parameters(), GRAD_CLIP)
+            nn.utils.clip_grad_norm_(model.parameters(), ModelConfig.grad_clip)
             scaler.step(optimizer); scaler.update()
             total_loss += loss.item()
 
-        if epoch % PRINT_EVERY == 0 or epoch == EPOCHS - 1:
+        if epoch % EVAL_EVERY == 0 or epoch == ModelConfig.epochs - 1:
             acc, bal, rec1, long_acc = evaluate(model, device, eval_cfg,
                                                 long_thresh=LONG_THRESH)
             el = (time.time() - start) / 60
-            print(f"Epoch [{epoch+1:3d}/{EPOCHS}] | Loss {total_loss/len(loader):.4f} "
+            print(f"Epoch [{epoch+1:3d}/{ModelConfig.epochs}] | Loss {total_loss/len(loader):.4f} "
                   f"| acc {acc:5.1f} | bal {bal:5.1f} | rec1 {rec1:5.1f} "
                   f"| long(>= {LONG_THRESH}) {long_acc:5.1f} | {el:4.1f}m")
 
     to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
-    torch.save(to_save, "carryonly_pretrained.pt")
-    print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved carryonly_pretrained.pt")
+    torch.save(to_save, CARRYONLY_WEIGHTS)
+    print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved {CARRYONLY_WEIGHTS}")
 
 if __name__ == "__main__":
     train_carry()

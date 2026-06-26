@@ -21,7 +21,6 @@ class CharTokenizer:
                     f"Encoded sequence length {len(indices)} exceeds max_len={max_len}. "
                     "Increase max_seq_len or reduce the generation length."
                 )
-            # Pad sequences to ensure uniform tensor shapes for batching
             padding = [self.pad_idx] * (max_len - len(indices))
             indices = indices + padding
         return torch.tensor(indices, dtype=torch.long)
@@ -52,7 +51,6 @@ class ScratchpadAdditionDataset(Dataset):
         carry = 0
         steps = []
         
-        # Build the step-by-step causal trace
         for i in range(max_len):
             d1 = int(s1[i])
             d2 = int(s2[i])
@@ -62,7 +60,6 @@ class ScratchpadAdditionDataset(Dataset):
             carry = total // 10
             remainder = total % 10
             
-            # Format: C[carry_in]:[digit1]+[digit2]=[remainder]
             steps.append(f"C{current_carry}:{d1}+{d2}={remainder}")
             
         if carry > 0:
@@ -70,22 +67,18 @@ class ScratchpadAdditionDataset(Dataset):
             
         final_answer = str(n1 + n2)
         
-        # Join steps with commas and append the Answer token 'A'
         target_str = ",".join(steps) + f",A:{final_answer}"
         input_str = f"{n1}+{n2}="
         
-        # In a standard autoregressive model, the full sequence is "InputTarget"
         full_sequence = input_str + target_str
         return full_sequence
 
     def __getitem__(self, idx):
-        # On-the-fly generation to prevent memorization
         n1 = random.randint(10**(self.min_digits-1), 10**self.max_digits - 1)
         n2 = random.randint(10**(self.min_digits-1), 10**self.max_digits - 1)
         
         full_str = self.generate_scratchpad(n1, n2)
         
-        # Encode and pad the sequence
         tensor_seq = self.tokenizer.encode(full_str, max_len=self.max_seq_len)
         
         x = tensor_seq[:-1]
@@ -97,7 +90,6 @@ class ScratchpadAdditionDataset(Dataset):
 if __name__ == "__main__":
     tokenizer = CharTokenizer()
     
-    # Let's generate 3-digit and 4-digit addition problems
     dataset = ScratchpadAdditionDataset(
         num_samples=1000, 
         min_digits=3, 
@@ -111,7 +103,6 @@ if __name__ == "__main__":
     x, y = next(iter(dataloader))
     
     print("RAW STRING PREVIEW:")
-    # Generating a raw string to visualize the scratchpad logic
     sample_n1 = 456
     sample_n2 = 129
     print(f"Adding {sample_n1} and {sample_n2}:")

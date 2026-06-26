@@ -13,22 +13,12 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from src.Transformer import GeneralTransformer
+from config import ModelConfig, EVAL_EVERY, RULE30_WEIGHTS
 from data_generation.Rule30Generator import Rule30Dataset
 
-def train_kaggle_gpu():
-    # 1. Hyperparameters
+def train():
     VOCAB_SIZE = 2
-    D_MODEL = 256         
-    NHEAD = 8
-    NUM_LAYERS = 6
-    
-    SEQ_LENGTH = 256       
-    BATCH_SIZE = 128      
-    EPOCHS = 300         
-    NUM_SAMPLES = 20000
-    
-    WEIGHT_DECAY = 0.2   
-    LEARNING_RATE = 1e-3
+    SEQ_LENGTH = 256      
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Initializing Phase 3 Pre-Training on device: {device}")
@@ -36,18 +26,18 @@ def train_kaggle_gpu():
     # 2. Initialize Architecture and Data
     model = GeneralTransformer(
         vocab_size=VOCAB_SIZE,
-        d_model=D_MODEL,
-        nhead=NHEAD,
-        num_layers=NUM_LAYERS,
-        dim_feedforward=1024,
+        d_model=ModelConfig.d_model,
+        nhead=ModelConfig.n_heads,
+        num_layers=ModelConfig.n_layers,
+        dim_feedforward=ModelConfig.dim_feedforward,
     ).to(device)
 
-    dataset = Rule30Dataset(num_samples=NUM_SAMPLES, seq_length=SEQ_LENGTH)
+    dataset = Rule30Dataset(num_samples=ModelConfig.num_samples, seq_length=SEQ_LENGTH)
     
     # GPU-Optimized DataLoader
     dataloader = DataLoader(
         dataset, 
-        batch_size=BATCH_SIZE, 
+        batch_size=ModelConfig.batch_size, 
         shuffle=True,
         pin_memory=True,       
         num_workers=2         
@@ -55,7 +45,7 @@ def train_kaggle_gpu():
 
     # 3. Loss, Optimizer, and AMP Configuration
     criterion = nn.CrossEntropyLoss()
-    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    optimizer = AdamW(model.parameters(), lr=ModelConfig.lr, weight_decay=ModelConfig.weight_decay)
     
     scaler = GradScaler()
 
@@ -63,7 +53,7 @@ def train_kaggle_gpu():
     start_time = time.time()
     model.train()
     
-    for epoch in range(EPOCHS):
+    for epoch in range(ModelConfig.epochs):
         total_loss = 0.0
         correct_predictions = 0
         total_predictions = 0
@@ -97,11 +87,11 @@ def train_kaggle_gpu():
         avg_loss = total_loss / len(dataloader)
         accuracy = (correct_predictions / total_predictions) * 100
         
-        if epoch % 5 == 0 or epoch == EPOCHS - 1:
-            print(f"Epoch [{epoch+1:3d}/{EPOCHS}] | Loss: {avg_loss:.4f} | Accuracy: {accuracy:.2f}%")
+        if epoch % EVAL_EVERY == 0 or epoch == ModelConfig.epochs - 1:
+            print(f"Epoch [{epoch+1:3d}/{ModelConfig.epochs}] | Loss: {avg_loss:.4f} | Accuracy: {accuracy:.2f}%")
 
     # 5. Save the Checkpoint
-    checkpoint_path = "rule30_pretrained_new.pt"
+    checkpoint_path = RULE30_WEIGHTS
     torch.save(model.state_dict(), checkpoint_path)
     
     elapsed_time = time.time() - start_time
@@ -109,4 +99,4 @@ def train_kaggle_gpu():
     print(f"Model weights saved to '{checkpoint_path}'.")
 
 if __name__ == "__main__":
-    train_kaggle_gpu()
+    train()

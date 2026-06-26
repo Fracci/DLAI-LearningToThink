@@ -5,9 +5,10 @@ import random
 ZERO, ONE, SEP, QUERY, PAD = 0, 1, 2, 3, 4
 VOCAB = 5
 IGNORE = -100
+TARGET_ACTIVE = 0.25
 
 
-def sample_ab(n, chain_max=12, target_active=0.25):
+def sample_ab(n, chain_max=12, target_active=TARGET_ACTIVE):
     a = torch.zeros(n, dtype=torch.long)
     b = torch.zeros(n, dtype=torch.long)
 
@@ -83,7 +84,7 @@ def assemble(a, b, max_len, latent="carry_out"):
 
 
 class CarryOnlyDataset(Dataset):
-    def __init__(self, num_samples, min_n, max_n, chain_max=12, target_active=0.25):
+    def __init__(self, num_samples, min_n, max_n, chain_max=12, target_active=TARGET_ACTIVE):
         self.num_samples = num_samples
         self.min_n, self.max_n = min_n, max_n
         self.chain_max = chain_max
@@ -112,7 +113,7 @@ if __name__ == "__main__":
     long_chains = 0
     for _ in range(2000):
         n = random.randint(8, 24)
-        a, b = sample_ab(n, chain_max=12, target_active=0.25)
+        a, b = sample_ab(n, chain_max=12, target_active=TARGET_ACTIVE)
         cout, cin, dist = compute_carry(a, b)
         o, t = _balance(cout); tot_ones += o; tot += t
         maxdist = max(maxdist, int(dist.max()))
@@ -122,7 +123,7 @@ if __name__ == "__main__":
     print(f"samples with a long chain (gen_dist>=5): {100.0*long_chains/2000:4.1f}%\n")
 
     n = 16
-    a, b = sample_ab(n, chain_max=12, target_active=0.25)
+    a, b = sample_ab(n, chain_max=12, target_active=TARGET_ACTIVE)
     cout, cin, dist = compute_carry(a, b)
     print("a (LSB->):", a.tolist())
     print("b (LSB->):", b.tolist())

@@ -15,17 +15,13 @@ class Rule30Dataset(Dataset):
         return self.num_samples
 
     def __getitem__(self, idx):
-        # 1. On-the-Fly Initialization: Generate a random binary vector for step t
         state_t = torch.randint(0, 2, (self.seq_length,), dtype=torch.long)
         
-        # 2. Periodic Boundary Conditions (Wrap-around)
         left_neighbors = torch.roll(state_t, shifts=1, dims=0)
         right_neighbors = torch.roll(state_t, shifts=-1, dims=0)
         
-        # 3. Calculate Neighborhood Binary Value (0 to 7)
         neighborhoods = (left_neighbors * 4) + (state_t * 2) + (right_neighbors * 1)
         
-        # 4. Apply Rule 30
         state_t_plus_1 = self.rule_lookup[neighborhoods]
         
         return state_t, state_t_plus_1
