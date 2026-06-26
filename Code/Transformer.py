@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import math
 
-class Rule30Transformer(nn.Module):
+class GeneralTransformer(nn.Module):
     def __init__(
         self, 
         vocab_size=2,          
@@ -28,8 +28,8 @@ class Rule30Transformer(nn.Module):
             dim_feedforward=dim_feedforward,
             dropout=dropout,
             activation='gelu',
-            norm_first=True,    # CRITICAL: Pre-LN configuration for training stability
-            batch_first=True    # Expects (Batch, Sequence, Feature)
+            norm_first=True,    
+            batch_first=True   
         )
         self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
         
@@ -40,11 +40,6 @@ class Rule30Transformer(nn.Module):
         self.fc_out = nn.Linear(d_model, vocab_size)
 
     def _get_alibi_causal_mask(self, seq_len, batch_size, device):
-        """
-        Generates a 3D causal mask combined with ALiBi relative position biases.
-        This entirely replaces absolute sinusoidal embeddings, enabling strict
-        shift-invariance and Out-of-Distribution (OOD) length extrapolation.
-        """
         # 1. Base Causal Mask: Upper triangular matrix of -inf (blocks future tokens)
         causal_mask = nn.Transformer.generate_square_subsequent_mask(seq_len).to(device)
         
@@ -58,26 +53,20 @@ class Rule30Transformer(nn.Module):
         slopes = torch.tensor(get_slopes(self.nhead), device=device)
         
         # 3. Distance Matrix: Calculates distance between query (i) and key (j)
-        i = torch.arange(seq_len, device=device).unsqueeze(1) # Rows (queries)
-        j = torch.arange(seq_len, device=device).unsqueeze(0) # Columns (keys)
-        distances = i - j # Positive values for past tokens
+        i = torch.arange(seq_len, device=device).unsqueeze(1) 
+        j = torch.arange(seq_len, device=device).unsqueeze(0) 
+        distances = i - j 
         
         # 4. ALiBi Bias: -m * distance
-        # Shape: (nhead, seq_len, seq_len)
         alibi_bias = -1 * distances.unsqueeze(0) * slopes.view(-1, 1, 1)
         
         # 5. Merge ALiBi with Causal Mask
-        # The causal_mask adds -inf to future tokens, while alibi adds smooth penalties to past tokens
         combined_mask = alibi_bias + causal_mask.unsqueeze(0)
         
         # 6. PyTorch requirement: 3D mask shape must be (batch_size * nhead, seq_len, seq_len)
-        # We repeat the mask for every item in the batch
         return combined_mask.repeat(batch_size, 1, 1)
 
     def forward(self, src):
-        """
-        src shape: (batch_size, seq_len)
-        """
         batch_size, seq_len = src.shape
         
         # Embed and scale
@@ -87,8 +76,7 @@ class Rule30Transformer(nn.Module):
         mask = self._get_alibi_causal_mask(seq_len, batch_size, src.device)
         
         # Forward pass through the Transformer
-        # We pass the custom mask to 'mask' (which applies to the attention weights)
-        out = self.transformer(x, mask=mask, is_causal=False) # is_causal=False because our custom mask handles it
+        out = self.transformer(x, mask=mask, is_causal=False)
         
         # Final norm and linear projection
         out = self.final_norm(out)

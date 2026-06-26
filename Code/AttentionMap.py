@@ -2,47 +2,37 @@ import os
 import math
 import torch
 import matplotlib
-matplotlib.use("Agg")          # headless-safe (Kaggle / servers)
+matplotlib.use("Agg")         
 import matplotlib.pyplot as plt
 
-from Transformer import Rule30Transformer
+from Transformer import GeneralTransformer
 from ArithmeticDataset import CharTokenizer
 
-# ===================================================================
 # CONFIG  — edit these, then just run the file (no command-line args)
-# ===================================================================
-LAYER = 0   # try 1 or 2 as well: retrieval heads sometimes live deeper
+LAYER = 0   # change to change the layer
 EXPR  = "456+129=C0:6+9=5,C1:5+2=8,C0:4+1=5,A:585"
 
-# (checkpoint_path, is_raw_rule30_checkpoint, output_png)
-# Missing files are skipped automatically.
 RUNS = [
-    ("rule30_pretrained_new.pt",      True,  "A_before.png"),   # A before fine-tuning
-    ("modelA_phase5_epoch_300.pt",    False, "A_after.png"),    # A after fine-tuning
-    ("modelB_phase5_epoch_300.pt",    False, "B_after.png"),    # B after fine-tuning
+    ("rule30_pretrained_new.pt",      True,  "A_before.png"),   
+    ("modelA_phase5_epoch_300.pt",    False, "A_after.png"),   
+    ("modelB_phase5_epoch_300.pt",    False, "B_after.png"),
 ]
 
-# Architecture must match what you trained
+# Architecture
 D_MODEL = 256
 NHEAD = 8
 NUM_LAYERS = 6
 DIM_FEEDFORWARD = 1024
-# ===================================================================
 
 
 def load_model(checkpoint_path, vocab_size, device, pretrained_rule30=False):
-    """
-    pretrained_rule30=True  -> 2-token Rule30 checkpoint: drop embedding.*/fc_out.*,
-                               load the rest (strict=False) = 'A before fine-tuning'.
-    pretrained_rule30=False -> already-fine-tuned 16-token checkpoint: load everything.
-    """
-    model = Rule30Transformer(
+    model = GeneralTransformer(
         vocab_size=vocab_size, d_model=D_MODEL, nhead=NHEAD,
         num_layers=NUM_LAYERS, dim_feedforward=DIM_FEEDFORWARD,
     ).to(device)
 
     sd = torch.load(checkpoint_path, map_location=device)
-    sd = {k.replace("module.", ""): v for k, v in sd.items()}   # undo DataParallel
+    sd = {k.replace("module.", ""): v for k, v in sd.items()}
 
     if pretrained_rule30:
         sd = {k: v for k, v in sd.items()
@@ -57,24 +47,19 @@ def load_model(checkpoint_path, vocab_size, device, pretrained_rule30=False):
 
 @torch.no_grad()
 def get_attention(model, ids, device, layer_idx=0):
-    """Per-head attention (nhead, L, L) for one layer.
-
-    nn.TransformerEncoder hides attention weights, so we re-run the chosen
-    layer's self_attn manually with need_weights=True.
-    """
     L = ids.shape[1]
     x = model.embedding(ids) * math.sqrt(model.d_model)
 
     layer = model.transformer.layers[layer_idx]
-    normed = layer.norm1(x)                                  # norm_first=True
-    mask = model._get_alibi_causal_mask(L, 1, device)        # (nhead, L, L)
+    normed = layer.norm1(x)                                 
+    mask = model._get_alibi_causal_mask(L, 1, device)       
 
     _, attn = layer.self_attn(
         normed, normed, normed,
         attn_mask=mask,
         need_weights=True,
         average_attn_weights=False,
-    )                                                        # (1, nhead, L, L)
+    )                                                       
     return attn[0].cpu()
 
 
@@ -85,7 +70,7 @@ def plot_heads(attn, eq_col, title, out_path):
         ax.imshow(attn[h], cmap="viridis", aspect="auto")
         ax.set_title(f"head {h}")
         if eq_col is not None:
-            ax.axvline(eq_col + 0.5, color="red", lw=1, alpha=0.7)  # left of line = operands
+            ax.axvline(eq_col + 0.5, color="red", lw=1, alpha=0.7) 
         ax.set_xlabel("key (looked-at)")
         ax.set_ylabel("query (writing)")
     fig.suptitle(title)

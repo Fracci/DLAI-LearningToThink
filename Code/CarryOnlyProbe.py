@@ -1,45 +1,24 @@
-"""
-Matched world-model probe for the CARRY-ONLY model.
-
-The pretraining target is the carry-OUT at each query position. To verify a
-genuine LONG-RANGE, VARIABLE-DISTANCE world model we probe an intermediate layer
-for a latent the model was NEVER supervised on:
-
-  TARGET = "carry_in"  -> the carry ENTERING position i (= carry_out[i-1]).
-       Binary (chance 50%). It is the running carry-chain state; recovering it
-       means the representation carries long-range chain information, not the
-       local output it was trained on.
-
-  TARGET = "gen_dist"  -> bucketed distance back to the position that generated
-       the current carry (0..4, 5+ ; 6-way, chance 16.7%). The purest long-range
-       latent: "how far back is the cause of this carry."
-
-Linear probe, fp32, standardized features; random-init model = the floor.
-A clear gap = the carry model linearly represents the variable-distance carry
-structure -- the matched long-range world model the thesis predicts.
-"""
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.amp import autocast
 
-from Transformer import Rule30Transformer
+from Transformer import GeneralTransformer
 from CarryOnlyGenerator import sample_ab, assemble, VOCAB, IGNORE
 
-# --- config ---
+# CONFIG
 CHECKPOINT  = "carryonly_pretrained.pt"
 D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
 MIN_N, MAX_N = 8, 24
-CHAIN_MAX = 12              # must match pretraining
-TARGET_ACTIVE = 0.25       # must match pretraining (balanced labels)
+CHAIN_MAX = 12             
+TARGET_ACTIVE = 0.25
 MAX_LEN = 3 * MAX_N + 2
 BATCH_SIZE  = 128
 ITERS_PER_EPOCH = 80
 PROBE_EPOCHS = 25
 LR = 3e-4
 PROBE_LAYER = 3
-TARGET = "gen_dist"              # "carry_in" (2-way) or "gen_dist" (6-way)
-# --------------
+TARGET = "gen_dist"  # or "carry_in"            
 
 
 def make_batch(bs, device):
@@ -133,7 +112,7 @@ def main():
     print(f"Carry-only world-model probe on {device}")
 
     try:
-        model = Rule30Transformer(vocab_size=VOCAB, d_model=D_MODEL, nhead=NHEAD,
+        model = GeneralTransformer(vocab_size=VOCAB, d_model=D_MODEL, nhead=NHEAD,
                                   num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
         sd = torch.load(CHECKPOINT, map_location=device)
         sd = {k.replace("module.", ""): v for k, v in sd.items()}
@@ -144,22 +123,15 @@ def main():
         return
     acc_trained, chance = run_probe(model, device, "CARRY model")
 
-    rand = Rule30Transformer(vocab_size=VOCAB, d_model=D_MODEL, nhead=NHEAD,
+    rand = GeneralTransformer(vocab_size=VOCAB, d_model=D_MODEL, nhead=NHEAD,
                              num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
     acc_random, _ = run_probe(rand, device, "RANDOM-init control")
 
     gap = acc_trained - acc_random
-    print("\n" + "=" * 64)
     print(f"Long-range carry latent ({TARGET}) linear-probe @ layer {PROBE_LAYER}")
     print(f"  carry model   : {acc_trained:6.2f}%")
     print(f"  random control: {acc_random:6.2f}%   <- empirical floor (NOT chance {chance:.1f}%)")
     print(f"  GAP           : {gap:+6.2f} pts   <- this is the result")
-    print("=" * 64)
-    print("Interpret the GAP over the random control, not the raw %: with imbalanced")
-    print("or structured latents the trivially-decodable floor sits well above chance,")
-    print("so only trained-minus-random shows what the model actually represents.")
-    print("A clear positive gap = the model linearly encodes the variable-distance")
-    print("carry structure it was never directly taught -- a matched long-range world model.")
 
 
 if __name__ == "__main__":

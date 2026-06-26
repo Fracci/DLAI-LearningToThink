@@ -1,25 +1,3 @@
-"""
-Free-running (NON-teacher-forced) evaluation.
-
-Teacher-forced metrics feed the ground-truth scratchpad token at every step, so
-a single carry error never propagates -- they measure per-position competence,
-not whether the model can actually CARRY OUT addition. This script instead lets
-the model generate the entire scratchpad + answer autoregressively from just the
-prompt 'n1+n2=', feeding its OWN outputs back. One early error cascades, exactly
-as in real use. The metric is exact-match on the answer digits parsed from the
-MODEL'S generated stream.
-
-Expect lower numbers than teacher-forced -- that is the point. The honest
-question is whether a pretrained arm's advantage SURVIVES free-running.
-
-Greedy (argmax) decoding for determinism. Evaluated on a fixed seeded set at the
-final checkpoint of each seed (free-running is ~max_new_tokens x slower than
-teacher-forced, so keep the set modest).
-
-For a clean comparison this ALSO measures TEACHER-FORCED EM on the SAME final
-checkpoint and the SAME fixed problems, so the teacher-forced - free-running DROP
-is a pure error-accumulation signature (no late-window vs snapshot confound).
-"""
 import random
 import csv
 import os
@@ -28,62 +6,53 @@ import torch
 import torch.nn as nn
 from torch.amp import autocast
 
-from Transformer import Rule30Transformer
+from Transformer import GeneralTransformer
 from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
-# ---------------- config ----------------
+# CONFIG
 D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
 OOD_DIGITS   = [5, 6, 7]
-N_EVAL       = 400              # per length (free-running is slow; keep modest)
-MAX_NEW_TOKENS = 140            # generation budget (7-dig scratchpad ~98 tokens)
-GEN_MAX_SEQ_LEN = 200           # >= prompt + MAX_NEW_TOKENS
+N_EVAL       = 400              
+MAX_NEW_TOKENS = 140           
+GEN_MAX_SEQ_LEN = 200          
 VAL_SEED     = 20240601
-WEIGHTS_DIR  = "Weights"        # all checkpoints live here
-# (vocab size is read from each checkpoint / the tokenizer, not hardcoded)
+WEIGHTS_DIR  = "Weights"       
 
-# checkpoints to evaluate: (label, pattern with {seed}); A loaded as full fine-tuned model
 CHECKPOINTS = {
     "Rule30": "Rule30_seed{seed}_modelA.pt",
-    "Rollout": "rollout_seed{seed}_modelA.pt",
-    "Carry":   "carry_seed{seed}_modelA.pt",
+    "Rollout": "Rollout_seed{seed}_modelA.pt",
+    "Carry":   "Carryonly_seed{seed}_modelA.pt",
     "Baseline": "seed{seed}_modelB.pt",
 }
 SEEDS = [0, 1, 2, 3, 4]
 OUT_CSV = "freerun_results.csv"
-# ----------------------------------------
 
 
 def build_prompt_and_truth(tok, n1, n2, max_seq_len):
-    """Return (prompt_ids, true_answer_str). Prompt is 'n1+n2=' only."""
     prompt = f"{n1}+{n2}="
     return tok.encode(prompt, max_len=None), str(n1 + n2)
 
 
 @torch.no_grad()
 def generate(model, prompt_ids, tok, device, max_new=MAX_NEW_TOKENS):
-    """Greedy autoregressive generation from prompt_ids (1D LongTensor)."""
     ids = prompt_ids.tolist()
     for _ in range(max_new):
         x = torch.tensor([ids], dtype=torch.long, device=device)
         with autocast("cuda"):
             logits = model(x)
         nxt = int(torch.argmax(logits[0, -1], dim=-1).item())
-        if nxt == tok.pad_idx:           # model emitted pad -> stop
+        if nxt == tok.pad_idx:          
             break
         ids.append(nxt)
     return ids
 
 
 def digit_pd(pred, truth):
-    """Per-digit accuracy of a free-running answer vs truth, aligned at the
-    least-significant digit (rightmost). Scored over the TRUE answer's length, so
-    a too-short answer is penalized (missing digits = wrong) and any extra leading
-    digits beyond the true length are ignored. Empty pred -> 0. Returns (correct, total)."""
     total = len(truth)
     if total == 0:
         return (0, 0)
     correct = 0
-    for k in range(1, total + 1):       # k = 1 is the units digit
+    for k in range(1, total + 1):      
         t = truth[-k]
         p = pred[-k] if k <= len(pred) else None
         if p == t:
@@ -92,13 +61,10 @@ def digit_pd(pred, truth):
 
 
 def parse_answer(ids, tok):
-    """Extract digits after the LAST 'A:' in the generated id stream.
-    Returns the answer string, or '' if not parseable."""
     text = tok.decode(torch.tensor(ids))
     if "A:" not in text:
         return ""
     tail = text.split("A:")[-1]
-    # answer is the leading run of digits
     out = []
     for ch in tail:
         if ch.isdigit():
@@ -110,12 +76,8 @@ def parse_answer(ids, tok):
 
 @torch.no_grad()
 def eval_teacher_forced_matched(model, tok, d, n_eval, device):
-    """Teacher-forced answer exact-match on the SAME fixed problems used by
-    eval_freerun, by regenerating the dataset samples with the same RNG seed and
-    scoring the answer region with ground-truth context (batched)."""
     model.eval()
     PAD = tok.pad_idx; A_IDX = tok.char_to_idx["A"]
-    # rebuild the identical problem set: ScratchpadAdditionDataset seeded the same way
     random.seed(VAL_SEED + d)
     ds = ScratchpadAdditionDataset(num_samples=n_eval, min_digits=d, max_digits=d,
                                    tokenizer=tok, max_seq_len=GEN_MAX_SEQ_LEN)
@@ -143,11 +105,11 @@ def eval_teacher_forced_matched(model, tok, d, n_eval, device):
 @torch.no_grad()
 def eval_freerun(model, tok, d, n_eval, device, seed):
     model.eval()
-    random.seed(VAL_SEED + d)          # same fixed problems across all models/seeds
+    random.seed(VAL_SEED + d)          
     correct = total = parseable = 0
     pd_correct = pd_total = 0
     t0 = time.time()
-    report_every = max(1, n_eval // 4)   # ~4 progress lines per length
+    report_every = max(1, n_eval // 4)  
     for i in range(n_eval):
         n1 = random.randint(10 ** (d - 1), 10 ** d - 1)
         n2 = random.randint(10 ** (d - 1), 10 ** d - 1)
@@ -179,12 +141,11 @@ def eval_freerun(model, tok, d, n_eval, device, seed):
 def load_model(path, vocab, device):
     sd = torch.load(path, map_location=device)
     sd = {k.replace("module.", ""): v for k, v in sd.items()}
-    # vocab from the checkpoint itself (robust to tokenizer changes)
     ckpt_vocab = sd["embedding.weight"].shape[0] if "embedding.weight" in sd else vocab
     if ckpt_vocab != vocab:
         print(f"    [note] checkpoint vocab={ckpt_vocab} != tokenizer vocab={vocab}; "
               f"building model with {ckpt_vocab} to match the checkpoint.")
-    m = Rule30Transformer(ckpt_vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
+    m = GeneralTransformer(ckpt_vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
     m.load_state_dict(sd)              # full fine-tuned model -> strict load
     return m
 
@@ -211,10 +172,10 @@ def main():
              "freerun_EM", "freerun_PD", "parseable_pct",
              "TF_EM_sameckpt", "TF_PD_sameckpt",
              "drop_EM", "drop_PD"]]
-    agg = {}      # free-run EM
-    agg_pd = {}   # free-run PD
-    agg_tf = {}   # teacher-forced EM (same ckpt)
-    agg_tfpd = {} # teacher-forced PD (same ckpt)
+    agg = {}      
+    agg_pd = {}   
+    agg_tf = {}   
+    agg_tfpd = {} 
 
     for label, pat in CHECKPOINTS.items():
         for s in SEEDS:

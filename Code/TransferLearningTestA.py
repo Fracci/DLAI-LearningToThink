@@ -1,16 +1,3 @@
-"""
-A-ONLY multi-seed sweep.
-
-Trains and evaluates ONLY Model A (pretrained init), but still CONSTRUCTS (never
-trains) Model B so the RNG stream, A's initialization, and the training-data
-order stay byte-identical to the full A/B run. This is what makes A's numbers
-here directly comparable to a separately-trained B.
-
-This version does NOT load any stored B -- it just produces A's per-seed logs,
-positional breakdown, checkpoints, and an A-only summary. To get the A-vs-B gap,
-combine these A logs with the B columns from the full A/B run's seed{N}_log.csv
-afterwards (offline merge), once those B logs exist.
-"""
 import random
 import csv
 import torch
@@ -19,10 +6,10 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 from torch.amp import autocast, GradScaler
 
-from Transformer import Rule30Transformer
+from Transformer import GeneralTransformer
 from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
-# ===================== CONFIG =====================
+# CONFIG
 SEEDS        = [0, 1, 2, 3, 4]
 EPOCHS       = 300           
 EVAL_EVERY   = 5
@@ -41,8 +28,7 @@ VAL_SEED     = 20240601
 N_ID_VAL     = 2000
 N_OOD_VAL    = 3000
 SAVE_CHECKPOINTS = True
-OUT_TAG      = "carryonly"       # prefix for this arm's output files
-# ==================================================
+OUT_TAG      = "carryonly"       
 
 
 def set_seed(s):
@@ -109,7 +95,7 @@ def positional_accuracy(model, loader, a_idx, pad_idx, device, max_pos=MAX_POS):
 
 
 def build_A(vocab, device):
-    m = Rule30Transformer(vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
+    m = GeneralTransformer(vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
     sd = torch.load(PRETRAINED, map_location=device)
     sd = {k.replace("module.", ""): v for k, v in sd.items()}
     sd = {k: v for k, v in sd.items()
@@ -119,8 +105,7 @@ def build_A(vocab, device):
 
 
 def build_B(vocab, device):
-    # constructed for RNG parity with the full A/B run; never trained
-    return Rule30Transformer(vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
+    return GeneralTransformer(vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
 
 
 def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
@@ -132,8 +117,6 @@ def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
                                          tokenizer=tok, max_seq_len=MAX_SEQ_LEN)
     train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True, pin_memory=True)
 
-    # build A then B in the SAME order as the full run, so the RNG stream and A's
-    # init are byte-identical. B is constructed but NOT trained (RNG parity only).
     model_A = build_A(tok.vocab_size, device)
     _model_B_unused = build_B(tok.vocab_size, device)
     del _model_B_unused
@@ -221,7 +204,6 @@ def main():
         pos_file.flush()
     pos_file.close()
 
-    print("\n" + "=" * 60)
     print("AGGREGATE — A only (mean +/- std across seeds)")
     rows = [["eval_set", "metric", "A_mean", "A_std"]]
     for lab in labels:
@@ -231,9 +213,6 @@ def main():
             print(f"  {lab:5s} {metric} | A {Am:6.2f} +/- {As:4.2f}")
             rows.append([lab, metric, f"{Am:.2f}", f"{As:.2f}"])
         print()
-    print("=" * 60)
-    print("To get the A-vs-B gap, merge these A logs with the B columns from the "
-          "full A/B run's seed{N}_log.csv offline.")
 
     with open(f"{OUT_TAG}_seed_sweep_summary.csv", "w", newline="") as f:
         csv.writer(f).writerows(rows)

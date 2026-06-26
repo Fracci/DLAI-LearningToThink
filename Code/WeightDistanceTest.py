@@ -25,14 +25,12 @@ import torch
 import torch.nn.functional as F
 from collections import defaultdict
 
-# ---------------- config ----------------
-PRETRAINED   = "carryonly_pretrained.pt"      # A's init for THIS arm
+# CONFIG
+PRETRAINED   = "carryonly_pretrained.pt"     
 SEEDS        = [0, 1, 2, 3, 4]
-# filename patterns; {seed} is filled in. Edit to match your saved checkpoints.
 A_PATTERN    = "Weights/carryonly_seed{seed}_modelA.pt"
-B_PATTERN    = "Weights/seed{seed}_modelB.pt"          # B from the full A/B run (any arm; B is shared)
+B_PATTERN    = "Weights/seed{seed}_modelB.pt"    
 OUT_CSV      = "weight_distance_carryonly.csv"
-# ----------------------------------------
 
 
 def load(path):
@@ -63,7 +61,6 @@ def order(lg):
 
 
 def run_one_seed(seed, pre):
-    """Return (per_layer dict {layer:{A_pre,B_pre,A_B,relL2}}, global dict) or None if files missing."""
     a_path = A_PATTERN.format(seed=seed)
     b_path = B_PATTERN.format(seed=seed)
     if not (os.path.exists(a_path) and os.path.exists(b_path)):
@@ -111,8 +108,8 @@ def main():
     pre = load(PRETRAINED)
 
     # accumulate per-seed results
-    layer_acc = defaultdict(lambda: defaultdict(list))   # layer -> metric -> [seed means]
-    glob_acc = defaultdict(list)                          # metric -> [seed globals]
+    layer_acc = defaultdict(lambda: defaultdict(list))
+    glob_acc = defaultdict(list)
     all_param_rows = []
     seeds_done = []
 

@@ -22,16 +22,16 @@ from torch.optim import AdamW
 from torch.utils.data import DataLoader, TensorDataset
 from torch.amp import autocast, GradScaler
 
-from Transformer import Rule30Transformer
+from Transformer import GeneralTransformer
 from ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
-# ===================== CONFIG =====================
+# CONFIG
 SEEDS        = [3, 4]
 EPOCHS       = 300
 EVAL_EVERY   = 5
-LATE_FRAC    = 0.5            # average over the last 50% of eval points per seed
-OOD_DIGITS   = [5, 6, 7]        # OOD lengths to track
-MAX_POS      = 12            # positional breakdown depth (answer digits, from LSB)
+LATE_FRAC    = 0.5           
+OOD_DIGITS   = [5, 6, 7]     
+MAX_POS      = 12            
 
 D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
 BATCH_SIZE   = 256
@@ -40,11 +40,10 @@ OOD_MAX_SEQ_LEN = 160
 LR, WEIGHT_DECAY, GRAD_CLIP = 5e-4, 0.1, 1.0
 
 PRETRAINED   = "rule30_rollout_pretrained.pt"
-VAL_SEED     = 20240601       # fixed -> identical eval sets across all seeds
+VAL_SEED     = 20240601       
 N_ID_VAL     = 2000
-N_OOD_VAL    = 3000           # per length
+N_OOD_VAL    = 3000           
 SAVE_CHECKPOINTS = True
-# ==================================================
 
 
 def set_seed(s):
@@ -61,7 +60,6 @@ def build_loss_targets(x, y, eq_idx, pad_idx):
 
 
 def answer_region(y, a_idx, pad_idx):
-    """Boolean mask of the answer-digit positions (after 'A:')."""
     L = y.size(1)
     pos = torch.arange(L, device=y.device).unsqueeze(0)
     a_col = (y == a_idx).long().argmax(dim=1, keepdim=True)
@@ -78,7 +76,6 @@ def materialize_loader(tok, min_d, max_d, n, max_seq_len, seed, batch):
 
 @torch.no_grad()
 def eval_metrics(model, loader, a_idx, pad_idx, device):
-    """Returns (exact_match%, per_digit%). Teacher-forced."""
     model.eval()
     em_correct = em_total = 0
     dig_correct = dig_total = 0
@@ -100,7 +97,6 @@ def eval_metrics(model, loader, a_idx, pad_idx, device):
 
 @torch.no_grad()
 def positional_accuracy(model, loader, a_idx, pad_idx, device, max_pos=MAX_POS):
-    """Right-aligned answer-digit accuracy: position 0 = least-significant digit."""
     model.eval()
     correct = torch.zeros(max_pos, dtype=torch.long)
     total = torch.zeros(max_pos, dtype=torch.long)
@@ -125,7 +121,7 @@ def positional_accuracy(model, loader, a_idx, pad_idx, device, max_pos=MAX_POS):
 
 
 def build_A(vocab, device):
-    m = Rule30Transformer(vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
+    m = GeneralTransformer(vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
     sd = torch.load(PRETRAINED, map_location=device)
     sd = {k.replace("module.", ""): v for k, v in sd.items()}
     sd = {k: v for k, v in sd.items()
@@ -135,7 +131,7 @@ def build_A(vocab, device):
 
 
 def build_B(vocab, device):
-    return Rule30Transformer(vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
+    return GeneralTransformer(vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
 
 
 def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
@@ -261,7 +257,6 @@ def main():
     pos_file.close()
 
     # aggregate
-    print("\n" + "=" * 72)
     print("AGGREGATE (mean +/- std across seeds)")
     rows = [["eval_set", "metric", "A_mean", "A_std", "B_mean", "B_std", "gap_mean", "gap_std"]]
     for lab in labels:
@@ -275,7 +270,6 @@ def main():
             rows.append([lab, metric, f"{Am:.2f}", f"{As:.2f}", f"{Bm:.2f}", f"{Bs:.2f}",
                          f"{Gm:.2f}", f"{Gs:.2f}"])
         print()
-    print("=" * 72)
 
     with open("seed_sweep_summary.csv", "w", newline="") as f:
         csv.writer(f).writerows(rows)

@@ -3,12 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 import random
 
 class CharTokenizer:
-    """
-    A simple character-level tokenizer for the mathematical scratchpad.
-    Converts strings like 'C0:5+3=8,A:168' into PyTorch tensors.
-    """
     def __init__(self):
-        # Define the exact vocabulary needed for the scratchpad
         chars = list("0123456789+=C:,A")
         self.pad_token = "<PAD>"
         self.vocab = [self.pad_token] + chars
@@ -38,14 +33,6 @@ class CharTokenizer:
 
 class ScratchpadAdditionDataset(Dataset):
     def __init__(self, num_samples, min_digits, max_digits, tokenizer, max_seq_len):
-        """
-        Args:
-            num_samples (int): Number of virtual samples per epoch.
-            min_digits (int): Minimum length of the numbers to add.
-            max_digits (int): Maximum length of the numbers to add.
-            tokenizer (CharTokenizer): The tokenizer to encode strings.
-            max_seq_len (int): The padded length for the tensor outputs.
-        """
         self.num_samples = num_samples
         self.min_digits = min_digits
         self.max_digits = max_digits
@@ -56,11 +43,9 @@ class ScratchpadAdditionDataset(Dataset):
         return self.num_samples
 
     def generate_scratchpad(self, n1, n2):
-        # Convert to strings and reverse them to process right-to-left (ones, tens, hundreds)
         s1, s2 = str(n1)[::-1], str(n2)[::-1]
         max_len = max(len(s1), len(s2))
         
-        # Pad the shorter number with zeros for column alignment
         s1 = s1.ljust(max_len, '0')
         s2 = s2.ljust(max_len, '0')
         
@@ -125,14 +110,14 @@ if __name__ == "__main__":
     
     x, y = next(iter(dataloader))
     
-    print("--- RAW STRING PREVIEW ---")
+    print("RAW STRING PREVIEW:")
     # Generating a raw string to visualize the scratchpad logic
     sample_n1 = 456
     sample_n2 = 129
     print(f"Adding {sample_n1} and {sample_n2}:")
     print(dataset.generate_scratchpad(sample_n1, sample_n2))
     
-    print("\n--- BATCH TENSOR PREVIEW ---")
+    print("\nBATCH TENSOR PREVIEW:")
     print(f"X shape: {x.shape} (Input tokens)")
     print(f"Y shape: {y.shape} (Target tokens shifted by 1)")
     print("\nDecoded Batch 0 (X):")

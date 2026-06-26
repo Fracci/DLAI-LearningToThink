@@ -6,34 +6,29 @@ from torch.cuda.amp import autocast, GradScaler
 import time
 
 # Import your custom modules
-from Transformer import Rule30Transformer
+from Transformer import GeneralTransformer
 from Rule30Generator import Rule30Dataset
 
 def train_kaggle_gpu():
-    # ---------------------------------------------------------
-    # 1. Hyperparameters (Scaled UP for Kaggle GPU execution)
-    # ---------------------------------------------------------
+    # 1. Hyperparameters
     VOCAB_SIZE = 2
-    D_MODEL = 256          # Increased model width
+    D_MODEL = 256         
     NHEAD = 8
     NUM_LAYERS = 6
     
-    SEQ_LENGTH = 256       # Longer sequences test the memory buffer better
-    BATCH_SIZE = 128       # Maximize GPU VRAM usage
+    SEQ_LENGTH = 256       
+    BATCH_SIZE = 128      
     EPOCHS = 300         
-    NUM_SAMPLES = 20000    # Larger virtual dataset per epoch
+    NUM_SAMPLES = 20000
     
     WEIGHT_DECAY = 0.2   
     LEARNING_RATE = 1e-3
     
-    # Auto-detect GPU
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Initializing Phase 3 Pre-Training on device: {device}")
 
-    # ---------------------------------------------------------
     # 2. Initialize Architecture and Data
-    # ---------------------------------------------------------
-    model = Rule30Transformer(
+    model = GeneralTransformer(
         vocab_size=VOCAB_SIZE,
         d_model=D_MODEL,
         nhead=NHEAD,
@@ -48,22 +43,17 @@ def train_kaggle_gpu():
         dataset, 
         batch_size=BATCH_SIZE, 
         shuffle=True,
-        pin_memory=True,       # Crucial: Page-locked memory for fast GPU transfer
-        num_workers=2          # Multi-threading for data generation
+        pin_memory=True,       
+        num_workers=2         
     )
 
-    # ---------------------------------------------------------
     # 3. Loss, Optimizer, and AMP Configuration
-    # ---------------------------------------------------------
     criterion = nn.CrossEntropyLoss()
     optimizer = AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     
-    # GradScaler for Automatic Mixed Precision (FP16 speedup)
     scaler = GradScaler()
 
-    # ---------------------------------------------------------
     # 4. Training Loop
-    # ---------------------------------------------------------
     start_time = time.time()
     model.train()
     
@@ -73,31 +63,26 @@ def train_kaggle_gpu():
         total_predictions = 0
         
         for batch_idx, (state_t, state_t_plus_1) in enumerate(dataloader):
-            # non_blocking=True prevents CPU from waiting for the GPU transfer
             state_t = state_t.to(device, non_blocking=True)
             state_t_plus_1 = state_t_plus_1.to(device, non_blocking=True)
 
             optimizer.zero_grad()
             
-            # Use AMP for forward pass to double training speed
             with autocast():
                 logits = model(state_t)
                 
-                # Causal shifting logic
                 shifted_targets = torch.roll(state_t_plus_1, shifts=1, dims=1)
                 logits_valid = logits[:, 2:, :]
                 targets_valid = shifted_targets[:, 2:]
                 
                 loss = criterion(logits_valid.reshape(-1, VOCAB_SIZE), targets_valid.reshape(-1))
 
-            # Scaled backward pass
             scaler.scale(loss).backward()
             scaler.step(optimizer)
             scaler.update()
             
             total_loss += loss.item()
             
-            # Accuracy tracking
             preds = torch.argmax(logits_valid, dim=-1)
             correct_predictions += (preds == targets_valid).sum().item()
             total_predictions += targets_valid.numel()
@@ -109,9 +94,7 @@ def train_kaggle_gpu():
         if epoch % 5 == 0 or epoch == EPOCHS - 1:
             print(f"Epoch [{epoch+1:3d}/{EPOCHS}] | Loss: {avg_loss:.4f} | Accuracy: {accuracy:.2f}%")
 
-    # ---------------------------------------------------------
-    # 5. Save the Checkpoint to Kaggle Output
-    # ---------------------------------------------------------
+    # 5. Save the Checkpoint
     checkpoint_path = "rule30_pretrained_new.pt"
     torch.save(model.state_dict(), checkpoint_path)
     

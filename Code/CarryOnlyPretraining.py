@@ -1,19 +1,3 @@
-"""
-Pre-training on the carry-only task (multi-GPU).
-
-Same architecture as the other arms (clean transfer swap). The model reads out
-the carry-out at each query position from the bit segments -- forced to trace the
-variable-distance carry chain. Saves carryonly_pretrained.pt for SeedSweep's
-build_A (point PRETRAINED at it).
-
-Metrics (raw accuracy alone can hide failure even at balanced labels):
-  acc      = overall query accuracy
-  bal_acc  = mean of carry==0 and carry==1 recalls
-  rec1     = recall on carry==1 positions
-  long_acc = accuracy on LONG-chain positions (gen_dist >= LONG_THRESH)
-             -- the load-bearing long-range cases; this is the number that
-             proves the long-range circuit actually formed.
-"""
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -21,14 +5,13 @@ from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
 import time
 
-from Transformer import Rule30Transformer
+from Transformer import GeneralTransformer
 from CarryOnlyGenerator import (CarryOnlyDataset, compute_carry, assemble,
                                  sample_ab, VOCAB, IGNORE)
 import random
 
 
 def make_eval_batch(bs, min_n, max_n, chain_max, target_active, max_len, device):
-    """Eval batch that also returns per-query gen_dist (for chain-length metrics)."""
     seqs, targs, dists = [], [], []
     for _ in range(bs):
         n = random.randint(min_n, max_n)
@@ -90,7 +73,7 @@ def train_carry():
     print(f"Carry-only pre-training on {device} ({n_gpu} GPU) | n {MIN_N}-{MAX_N} "
           f"| chain_max {CHAIN_MAX} | active {TARGET_ACTIVE} | batch {BATCH_SIZE}")
 
-    model = Rule30Transformer(vocab_size=VOCAB, d_model=D_MODEL, nhead=NHEAD,
+    model = GeneralTransformer(vocab_size=VOCAB, d_model=D_MODEL, nhead=NHEAD,
                               num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
     if n_gpu > 1:
         print(f"Using {n_gpu} GPUs via DataParallel.")
@@ -135,8 +118,6 @@ def train_carry():
     to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
     torch.save(to_save, "carryonly_pretrained.pt")
     print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved carryonly_pretrained.pt")
-    print("Check: 'long' accuracy near 'acc' => the long-range carry circuit formed.")
-
 
 if __name__ == "__main__":
     train_carry()

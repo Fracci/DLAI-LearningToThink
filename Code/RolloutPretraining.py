@@ -1,12 +1,3 @@
-"""
-Pre-training on the multi-step Rule 30 ROLLOUT task (multi-GPU).
-
-Identical architecture to the single-step Rule 30 model (so transfer is a clean
-apples-to-apples swap: only the pretraining TASK changes). Uses both Kaggle GPUs
-via nn.DataParallel when available. The saved checkpoint drops straight into
-SeedSweep's build_A (which strips the 'module.' prefix and keeps transformer.* /
-final_norm.*) -- just point PRETRAINED at 'rule30_rollout_pretrained.pt'.
-"""
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -14,20 +5,18 @@ from torch.utils.data import DataLoader
 from torch.amp import autocast, GradScaler
 import time
 
-from Transformer import Rule30Transformer
+from Transformer import GeneralTransformer
 from RolloutGenerator import Rule30RolloutDataset, PAD_IDX
 
 
 def train_rollout():
-    # --- architecture: MUST match the single-step model for a fair comparison ---
-    VOCAB_SIZE = 3                       # {0, 1, PAD}
+    VOCAB_SIZE = 3                       
     D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
 
-    # --- rollout task shape ---
-    MIN_N, MAX_N = 16, 32                # variable period -> forces content-based induction
-    ROWS = 8                             # propagation steps; max seq length = MAX_N*ROWS = 256
+    MIN_N, MAX_N = 16, 32                
+    ROWS = 8                             
 
-    BATCH_SIZE = 256                     # larger batch to feed 2 GPUs
+    BATCH_SIZE = 256                     
     EPOCHS = 300
     NUM_SAMPLES = 20000
     LR, WEIGHT_DECAY, GRAD_CLIP = 1e-3, 0.2, 1.0
@@ -38,7 +27,7 @@ def train_rollout():
     print(f"Rollout pre-training on {device} ({n_gpu} GPU(s)) | period {MIN_N}-{MAX_N} "
           f"| rows {ROWS} | max_len {MAX_N*ROWS} | batch {BATCH_SIZE}")
 
-    model = Rule30Transformer(vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD,
+    model = GeneralTransformer(vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD,
                               num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
     if n_gpu > 1:
         print(f"Using {n_gpu} GPUs via DataParallel.")
@@ -82,7 +71,6 @@ def train_rollout():
             print(f"Epoch [{epoch+1:3d}/{EPOCHS}] | Loss {total_loss/len(loader):.4f} "
                   f"| Rollout next-token acc {100.0*correct/total:6.2f}% | {elapsed:5.1f} min")
 
-    # unwrap DataParallel before saving so the checkpoint has clean keys
     to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
     torch.save(to_save, "rule30_rollout_pretrained.pt")
     print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved rule30_rollout_pretrained.pt")

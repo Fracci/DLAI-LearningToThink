@@ -3,11 +3,6 @@ from torch.utils.data import Dataset, DataLoader
 
 class Rule30Dataset(Dataset):
     def __init__(self, num_samples, seq_length):
-        """
-        Args:
-            num_samples (int): The number of virtual samples per epoch.
-            seq_length (int): The length of the 1D Cellular Automaton array (N).
-        """
         self.num_samples = num_samples
         self.seq_length = seq_length
         
@@ -37,7 +32,6 @@ class Rule30Dataset(Dataset):
 
 
 if __name__ == "__main__":
-    # Test with a tiny sequence length for your local CPU
     SEQ_LENGTH = 16
     BATCH_SIZE = 4
     
