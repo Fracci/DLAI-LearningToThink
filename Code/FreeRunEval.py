@@ -37,10 +37,10 @@ VOCAB_FOR_LOAD = 16             # arithmetic vocab (CharTokenizer)
 
 # checkpoints to evaluate: (label, pattern with {seed}); A loaded as full fine-tuned model
 CHECKPOINTS = {
-    "Rule30": "Rule30_seed{seed}_modelA.pt",
-    "Rollout": "rollout_seed{seed}_modelA.pt",
-    "Carry":   "carry_seed{seed}_modelA.pt",
-    "Baseline": "seed{seed}_modelB.pt",
+    "Rule30": "Weights/Rule30_seed{seed}_modelA.pt",
+    "Rollout": "Weights/rollout_seed{seed}_modelA.pt",
+    "Carry":   "Weights/carry_seed{seed}_modelA.pt",
+    "Baseline": "Weights/seed{seed}_modelB.pt",
 }
 SEEDS = [0, 1, 2, 3, 4]
 OUT_CSV = "freerun_results.csv"
