@@ -15,6 +15,10 @@ question is whether a pretrained arm's advantage SURVIVES free-running.
 Greedy (argmax) decoding for determinism. Evaluated on a fixed seeded set at the
 final checkpoint of each seed (free-running is ~max_new_tokens x slower than
 teacher-forced, so keep the set modest).
+
+For a clean comparison this ALSO measures TEACHER-FORCED EM on the SAME final
+checkpoint and the SAME fixed problems, so the teacher-forced - free-running DROP
+is a pure error-accumulation signature (no late-window vs snapshot confound).
 """
 import random
 import csv
@@ -34,13 +38,14 @@ MAX_NEW_TOKENS = 140            # generation budget (7-dig scratchpad ~98 tokens
 GEN_MAX_SEQ_LEN = 200           # >= prompt + MAX_NEW_TOKENS
 VAL_SEED     = 20240601
 VOCAB_FOR_LOAD = 16             # arithmetic vocab (CharTokenizer)
+WEIGHTS_DIR  = "Weights"        # all checkpoints live here
 
 # checkpoints to evaluate: (label, pattern with {seed}); A loaded as full fine-tuned model
 CHECKPOINTS = {
-    "Rule30": "Weights/Rule30_seed{seed}_modelA.pt",
-    "Rollout": "Weights/rollout_seed{seed}_modelA.pt",
-    "Carry":   "Weights/carry_seed{seed}_modelA.pt",
-    "Baseline": "Weights/seed{seed}_modelB.pt",
+    "Rule30": "Rule30_seed{seed}_modelA.pt",
+    "Rollout": "rollout_seed{seed}_modelA.pt",
+    "Carry":   "carry_seed{seed}_modelA.pt",
+    "Baseline": "seed{seed}_modelB.pt",
 }
 SEEDS = [0, 1, 2, 3, 4]
 OUT_CSV = "freerun_results.csv"
@@ -86,6 +91,35 @@ def parse_answer(ids, tok):
 
 
 @torch.no_grad()
+def eval_teacher_forced_matched(model, tok, d, n_eval, device):
+    """Teacher-forced answer exact-match on the SAME fixed problems used by
+    eval_freerun, by regenerating the dataset samples with the same RNG seed and
+    scoring the answer region with ground-truth context (batched)."""
+    model.eval()
+    PAD = tok.pad_idx; A_IDX = tok.char_to_idx["A"]
+    # rebuild the identical problem set: ScratchpadAdditionDataset seeded the same way
+    random.seed(VAL_SEED + d)
+    ds = ScratchpadAdditionDataset(num_samples=n_eval, min_digits=d, max_digits=d,
+                                   tokenizer=tok, max_seq_len=GEN_MAX_SEQ_LEN)
+    xs, ys = zip(*(ds[i] for i in range(n_eval)))
+    X = torch.stack(xs).to(device); Y = torch.stack(ys).to(device)
+    em_c = em_t = 0
+    B = 256
+    for i in range(0, n_eval, B):
+        xb = X[i:i+B]; yb = Y[i:i+B]
+        with autocast("cuda"):
+            preds = torch.argmax(model(xb), dim=-1)
+        Lc = yb.size(1)
+        pos = torch.arange(Lc, device=device).unsqueeze(0)
+        a_col = (yb == A_IDX).long().argmax(dim=1, keepdim=True)
+        ans = (pos >= (a_col + 2)) & (yb != PAD)
+        match = (preds == yb)
+        row_ok = (match | ~ans).all(dim=1) & ans.any(dim=1)
+        em_c += row_ok.sum().item(); em_t += ans.any(dim=1).sum().item()
+    return 100.0 * em_c / em_t if em_t else float("nan")
+
+
+@torch.no_grad()
 def eval_freerun(model, tok, d, n_eval, device, seed):
     model.eval()
     random.seed(VAL_SEED + d)          # same fixed problems across all models/seeds
@@ -125,41 +159,55 @@ def main():
     print(f"Free-running (greedy) eval on {device} | {N_EVAL}/length | "
           f"max_new={MAX_NEW_TOKENS}\n")
 
-    rows = [["model", "seed", "digits", "freerun_EM", "parseable_pct"]]
-    agg = {}   # (model,d) -> list of EM over seeds
+    rows = [["model", "seed", "digits", "freerun_EM", "parseable_pct",
+             "teacherforced_EM_sameckpt", "drop_TF_minus_free"]]
+    agg = {}      # (model,d) -> list of free-run EM over seeds
+    agg_tf = {}   # (model,d) -> list of teacher-forced EM (same ckpt) over seeds
 
     for label, pat in CHECKPOINTS.items():
         for s in SEEDS:
-            path = pat.format(seed=s)
+            path = os.path.join(WEIGHTS_DIR, pat.format(seed=s))
             if not os.path.exists(path):
                 print(f"  [skip] {label} seed {s}: {path} not found")
                 continue
             model = load_model(path, device)
             for d in OOD_DIGITS:
                 em, parse = eval_freerun(model, tok, d, N_EVAL, device, s)
-                rows.append([label, s, d, f"{em:.2f}", f"{parse:.1f}"])
+                tf_em = eval_teacher_forced_matched(model, tok, d, N_EVAL, device)
+                drop = (tf_em - em) if tf_em == tf_em else float("nan")  # nan-safe
+                rows.append([label, s, d, f"{em:.2f}", f"{parse:.1f}",
+                             f"{tf_em:.2f}", f"{drop:.2f}"])
                 agg.setdefault((label, d), []).append(em)
+                agg_tf.setdefault((label, d), []).append(tf_em)
                 print(f"  {label:9s} seed {s} {d}dig | free-run EM {em:5.1f}% "
-                      f"| parseable {parse:5.1f}%")
+                      f"| TF EM {tf_em:5.1f}% | drop {drop:5.1f} | parseable {parse:5.1f}%")
             del model
             if device.type == "cuda":
                 torch.cuda.empty_cache()
 
-    print("\n" + "=" * 60)
-    print("FREE-RUNNING EM — mean +/- std over seeds")
-    print(f"{'model':<10}" + "".join(f"{d}dig".rjust(12) for d in OOD_DIGITS))
-    summary = [["model"] + [f"{d}dig_mean" for d in OOD_DIGITS]
-               + [f"{d}dig_std" for d in OOD_DIGITS]]
+    print("\n" + "=" * 78)
+    print("FREE-RUN EM | TEACHER-FORCED EM (same ckpt) | DROP — mean over seeds")
+    print(f"{'model':<10}" + "".join(f"{d}dig".rjust(22) for d in OOD_DIGITS))
+    summary = [["model"]
+               + [f"{d}dig_freerun_mean" for d in OOD_DIGITS]
+               + [f"{d}dig_freerun_std" for d in OOD_DIGITS]
+               + [f"{d}dig_TF_mean" for d in OOD_DIGITS]
+               + [f"{d}dig_drop_mean" for d in OOD_DIGITS]]
     for label in CHECKPOINTS:
         line = f"{label:<10}"
-        means = []; stds = []
+        fmeans=[]; fstds=[]; tfmeans=[]; dropmeans=[]
         for d in OOD_DIGITS:
-            m, sd = mean_std(agg.get((label, d), []))
-            means.append(m); stds.append(sd)
-            line += (f"{m:5.1f}±{sd:<4.1f}").rjust(12)
+            fm, fsd = mean_std(agg.get((label, d), []))
+            tfm, _  = mean_std(agg_tf.get((label, d), []))
+            dm = (tfm - fm) if (fm==fm and tfm==tfm) else float("nan")
+            fmeans.append(fm); fstds.append(fsd); tfmeans.append(tfm); dropmeans.append(dm)
+            line += (f"{fm:4.1f}/{tfm:4.1f}/{dm:+4.1f}").rjust(22)
         print(line)
-        summary.append([label] + [f"{x:.2f}" for x in means] + [f"{x:.2f}" for x in stds])
-    print("=" * 60)
+        summary.append([label]
+                       + [f"{x:.2f}" for x in fmeans] + [f"{x:.2f}" for x in fstds]
+                       + [f"{x:.2f}" for x in tfmeans] + [f"{x:.2f}" for x in dropmeans])
+    print("=" * 78)
+    print("cells: free-run / teacher-forced / drop   (all EM %, same final ckpt)")
 
     with open(OUT_CSV, "w", newline="") as f:
         csv.writer(f).writerows(rows)
