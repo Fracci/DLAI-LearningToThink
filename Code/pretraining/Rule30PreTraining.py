@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 from torch.optim import AdamW
 from torch.utils.data import DataLoader
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast, GradScaler
 import time
 import os
 import sys
@@ -16,14 +16,16 @@ from src.Transformer import GeneralTransformer
 from config import ModelConfig, EVAL_EVERY, RULE30_WEIGHTS
 from data_generation.Rule30Generator import Rule30Dataset
 
+
 def train():
     VOCAB_SIZE = 2
-    SEQ_LENGTH = 256      
-    
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Initializing Phase 3 Pre-Training on device: {device}")
+    SEQ_LENGTH = 256
 
-    # 2. Initialize Architecture and Data
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    n_gpu = torch.cuda.device_count()
+    print(f"Rule30 pre-training on {device} ({n_gpu} GPU(s)) | seq_len {SEQ_LENGTH} "
+          f"| batch {ModelConfig.batch_size}")
+
     model = GeneralTransformer(
         vocab_size=VOCAB_SIZE,
         d_model=ModelConfig.d_model,
@@ -31,72 +33,63 @@ def train():
         num_layers=ModelConfig.n_layers,
         dim_feedforward=ModelConfig.dim_feedforward,
     ).to(device)
+    if n_gpu > 1:
+        print(f"Using {n_gpu} GPUs via DataParallel.")
+        model = nn.DataParallel(model)
 
     dataset = Rule30Dataset(num_samples=ModelConfig.num_samples, seq_length=SEQ_LENGTH)
-    
-    # GPU-Optimized DataLoader
-    dataloader = DataLoader(
-        dataset, 
-        batch_size=ModelConfig.batch_size, 
+    loader = DataLoader(
+        dataset,
+        batch_size=ModelConfig.batch_size,
         shuffle=True,
-        pin_memory=True,       
-        num_workers=2         
+        pin_memory=True,
+        num_workers=2,
     )
 
-    # 3. Loss, Optimizer, and AMP Configuration
     criterion = nn.CrossEntropyLoss()
     optimizer = AdamW(model.parameters(), lr=ModelConfig.lr, weight_decay=ModelConfig.weight_decay)
-    
-    scaler = GradScaler()
+    scaler = GradScaler("cuda")
 
-    # 4. Training Loop
-    start_time = time.time()
-    model.train()
-    
+    start = time.time()
     for epoch in range(ModelConfig.epochs):
+        model.train()
         total_loss = 0.0
-        correct_predictions = 0
-        total_predictions = 0
-        
-        for batch_idx, (state_t, state_t_plus_1) in enumerate(dataloader):
+        correct = total = 0
+
+        for state_t, state_t_plus_1 in loader:
             state_t = state_t.to(device, non_blocking=True)
             state_t_plus_1 = state_t_plus_1.to(device, non_blocking=True)
 
             optimizer.zero_grad()
-            
-            with autocast():
+            with autocast("cuda"):
                 logits = model(state_t)
-                
+                # left-anchored alignment (see NOTE above)
                 shifted_targets = torch.roll(state_t_plus_1, shifts=1, dims=1)
                 logits_valid = logits[:, 2:, :]
                 targets_valid = shifted_targets[:, 2:]
-                
                 loss = criterion(logits_valid.reshape(-1, VOCAB_SIZE), targets_valid.reshape(-1))
 
             scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            nn.utils.clip_grad_norm_(model.parameters(), ModelConfig.grad_clip)
             scaler.step(optimizer)
             scaler.update()
-            
+
             total_loss += loss.item()
-            
             preds = torch.argmax(logits_valid, dim=-1)
-            correct_predictions += (preds == targets_valid).sum().item()
-            total_predictions += targets_valid.numel()
+            correct += (preds == targets_valid).sum().item()
+            total += targets_valid.numel()
 
-        # Epoch Reporting
-        avg_loss = total_loss / len(dataloader)
-        accuracy = (correct_predictions / total_predictions) * 100
-        
         if epoch % EVAL_EVERY == 0 or epoch == ModelConfig.epochs - 1:
-            print(f"Epoch [{epoch+1:3d}/{ModelConfig.epochs}] | Loss: {avg_loss:.4f} | Accuracy: {accuracy:.2f}%")
+            acc = 100.0 * correct / max(total, 1)   # on-batch (train) accuracy
+            el = (time.time() - start) / 60
+            print(f"Epoch [{epoch+1:3d}/{ModelConfig.epochs}] | Loss {total_loss/len(loader):.4f} "
+                  f"| Rule30 next-state acc {acc:6.2f}% (train) | {el:5.1f} min")
 
-    # 5. Save the Checkpoint
-    checkpoint_path = RULE30_WEIGHTS
-    torch.save(model.state_dict(), checkpoint_path)
-    
-    elapsed_time = time.time() - start_time
-    print(f"\nTraining complete in {elapsed_time/60:.2f} minutes.")
-    print(f"Model weights saved to '{checkpoint_path}'.")
+    to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
+    torch.save(to_save, RULE30_WEIGHTS)
+    print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved {RULE30_WEIGHTS}")
+
 
 if __name__ == "__main__":
     train()

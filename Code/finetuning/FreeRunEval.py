@@ -25,10 +25,10 @@ VAL_SEED     = FinetuneConfig.val_seed
 WEIGHTS_DIR  = "Weights"       
 
 CHECKPOINTS = {
-    #"Rule30": "Rule30_seed{seed}_modelA.pt",
-    #"Rollout": "Rollout_seed{seed}_modelA.pt",
+    "Rule30": "Rule30_seed{seed}_modelA.pt",
+    "Rollout": "Rollout_seed{seed}_modelA.pt",
     "Carry":   "carryonly_seed{seed}_modelA.pt",
-    #"Baseline": "seed{seed}_modelB.pt",
+    "Baseline": "seed{seed}_modelB.pt",
 }
 OUT_CSV = "freerun_results.csv"
 
@@ -36,6 +36,16 @@ OUT_CSV = "freerun_results.csv"
 def build_prompt_and_truth(tok, n1, n2, max_seq_len):
     prompt = f"{n1}+{n2}="
     return tok.encode(prompt, max_len=None), str(n1 + n2)
+
+
+def make_problem_set(d, n_eval, seed):
+    """Generate the operand pairs for length d ONCE. Both the free-running and the
+    teacher-forced eval consume this exact list, so the two metrics are guaranteed
+    to run on identical problems (the drop is then a pure error-accumulation signal,
+    not an artifact of different examples)."""
+    rng = random.Random(seed)          # isolated RNG, independent of global state
+    lo, hi = 10 ** (d - 1), 10 ** d - 1
+    return [(rng.randint(lo, hi), rng.randint(lo, hi)) for _ in range(n_eval)]
 
 
 @torch.no_grad()
@@ -80,13 +90,20 @@ def parse_answer(ids, tok):
 
 
 @torch.no_grad()
-def eval_teacher_forced_matched(model, tok, d, n_eval, device):
+def eval_teacher_forced_matched(model, tok, d, problems, device):
+    """Teacher-forced EM/PD on the SAME operand pairs as eval_freerun (passed in),
+    so the free-run vs teacher-forced drop is measured on identical problems."""
     model.eval()
     PAD = tok.pad_idx; A_IDX = tok.char_to_idx["A"]
-    random.seed(VAL_SEED + d)
-    ds = ScratchpadAdditionDataset(num_samples=n_eval, min_digits=d, max_digits=d,
-                                   tokenizer=tok, max_seq_len=GEN_MAX_SEQ_LEN)
-    xs, ys = zip(*(ds[i] for i in range(n_eval)))
+    n_eval = len(problems)
+    # build (x, y) directly from the given operands using the dataset's own encoding
+    helper = ScratchpadAdditionDataset(num_samples=1, min_digits=d, max_digits=d,
+                                       tokenizer=tok, max_seq_len=GEN_MAX_SEQ_LEN)
+    xs, ys = [], []
+    for n1, n2 in problems:
+        full = helper.generate_scratchpad(n1, n2)
+        seq = tok.encode(full, max_len=GEN_MAX_SEQ_LEN)
+        xs.append(seq[:-1]); ys.append(seq[1:])
     X = torch.stack(xs).to(device); Y = torch.stack(ys).to(device)
     em_c = em_t = dig_c = dig_t = 0
     B = 256
@@ -108,16 +125,14 @@ def eval_teacher_forced_matched(model, tok, d, n_eval, device):
 
 
 @torch.no_grad()
-def eval_freerun(model, tok, d, n_eval, device, seed):
+def eval_freerun(model, tok, d, problems, device):
     model.eval()
-    random.seed(VAL_SEED + d)          
+    n_eval = len(problems)
     correct = total = parseable = 0
     pd_correct = pd_total = 0
     t0 = time.time()
-    report_every = max(1, n_eval // 4)  
-    for i in range(n_eval):
-        n1 = random.randint(10 ** (d - 1), 10 ** d - 1)
-        n2 = random.randint(10 ** (d - 1), 10 ** d - 1)
+    report_every = max(1, n_eval // 4)
+    for i, (n1, n2) in enumerate(problems):
         prompt_ids, truth = build_prompt_and_truth(tok, n1, n2, GEN_MAX_SEQ_LEN)
         gen = generate(model, prompt_ids.to(device), tok, device)
         pred = parse_answer(gen, tok)
@@ -193,8 +208,9 @@ def main():
             model = load_model(path, tok.vocab_size, device)
             for d in OOD_DIGITS:
                 td = time.time()
-                em, pd, parse = eval_freerun(model, tok, d, N_EVAL, device, s)
-                tf_em, tf_pd = eval_teacher_forced_matched(model, tok, d, N_EVAL, device)
+                problems = make_problem_set(d, N_EVAL, VAL_SEED + d)   # same set for both
+                em, pd, parse = eval_freerun(model, tok, d, problems, device)
+                tf_em, tf_pd = eval_teacher_forced_matched(model, tok, d, problems, device)
                 drop_em = (tf_em - em) if tf_em == tf_em else float("nan")
                 drop_pd = (tf_pd - pd) if tf_pd == tf_pd else float("nan")
                 rows.append([label, s, d,

@@ -12,7 +12,7 @@ if root_dir not in sys.path:
 
 from src.Transformer import GeneralTransformer
 from config import ProbeConfig, CARRYONLY_WEIGHTS
-from data_generation.CarryOnlyGenerator import sample_ab, assemble, VOCAB, IGNORE, TARGET_ACTIVE
+from data_generation.CarryOnlyGenerator import sample_ab, assemble, VOCAB, IGNORE, TARGET_ACTIVE, GEN_DIST_MAX
 
 # CONFIG
 CHECKPOINT  = "carryonly_pretrained.pt"
@@ -43,7 +43,7 @@ def capture_layer(model, layer_idx):
 
 
 def n_classes_for(target):
-    return 2 if target == "carry_in" else 6
+    return 2 if target == "carry_in" else (GEN_DIST_MAX + 1)
 
 
 @torch.no_grad()

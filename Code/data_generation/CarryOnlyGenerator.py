@@ -6,6 +6,7 @@ ZERO, ONE, SEP, QUERY, PAD = 0, 1, 2, 3, 4
 VOCAB = 5
 IGNORE = -100
 TARGET_ACTIVE = 0.25
+GEN_DIST_MAX = 12
 
 
 def sample_ab(n, chain_max=12, target_active=TARGET_ACTIVE):
@@ -62,7 +63,7 @@ def compute_carry(a, b):
     return cout, cin, dist
 
 
-def assemble(a, b, max_len, latent="carry_out"):
+def assemble(a, b, max_len, latent="carry_out", gen_dist_max=GEN_DIST_MAX):
     n = len(a)
     cout, cin, dist = compute_carry(a, b)
     seq = torch.full((max_len,), PAD, dtype=torch.long)
@@ -75,7 +76,7 @@ def assemble(a, b, max_len, latent="carry_out"):
 
     if latent == "carry_out":   vals = cout
     elif latent == "carry_in":  vals = cin
-    elif latent == "gen_dist":  vals = torch.clamp(dist, max=5)
+    elif latent == "gen_dist":  vals = torch.clamp(dist, max=gen_dist_max)
     else: raise ValueError(latent)
 
     target = torch.full((max_len,), IGNORE, dtype=torch.long)
