@@ -37,8 +37,8 @@ N_EVAL       = 400              # per length (free-running is slow; keep modest)
 MAX_NEW_TOKENS = 140            # generation budget (7-dig scratchpad ~98 tokens)
 GEN_MAX_SEQ_LEN = 200           # >= prompt + MAX_NEW_TOKENS
 VAL_SEED     = 20240601
-VOCAB_FOR_LOAD = 16             # arithmetic vocab (CharTokenizer)
 WEIGHTS_DIR  = "Weights"        # all checkpoints live here
+# (vocab size is read from each checkpoint / the tokenizer, not hardcoded)
 
 # checkpoints to evaluate: (label, pattern with {seed}); A loaded as full fine-tuned model
 CHECKPOINTS = {
@@ -138,10 +138,15 @@ def eval_freerun(model, tok, d, n_eval, device, seed):
     return (100.0 * correct / total, 100.0 * parseable / total)
 
 
-def load_model(path, device):
-    m = Rule30Transformer(VOCAB_FOR_LOAD, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
+def load_model(path, vocab, device):
     sd = torch.load(path, map_location=device)
     sd = {k.replace("module.", ""): v for k, v in sd.items()}
+    # vocab from the checkpoint itself (robust to tokenizer changes)
+    ckpt_vocab = sd["embedding.weight"].shape[0] if "embedding.weight" in sd else vocab
+    if ckpt_vocab != vocab:
+        print(f"    [note] checkpoint vocab={ckpt_vocab} != tokenizer vocab={vocab}; "
+              f"building model with {ckpt_vocab} to match the checkpoint.")
+    m = Rule30Transformer(ckpt_vocab, D_MODEL, NHEAD, NUM_LAYERS, DIM_FF).to(device)
     m.load_state_dict(sd)              # full fine-tuned model -> strict load
     return m
 
@@ -170,7 +175,7 @@ def main():
             if not os.path.exists(path):
                 print(f"  [skip] {label} seed {s}: {path} not found")
                 continue
-            model = load_model(path, device)
+            model = load_model(path, tok.vocab_size, device)
             for d in OOD_DIGITS:
                 em, parse = eval_freerun(model, tok, d, N_EVAL, device, s)
                 tf_em = eval_teacher_forced_matched(model, tok, d, N_EVAL, device)
