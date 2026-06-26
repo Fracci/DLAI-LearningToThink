@@ -10,20 +10,16 @@ root_dir = os.path.abspath(os.path.join(current_dir, ".."))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
+from config import ProbeConfig, ROLLOUT_WEIGHTS
 from src.Transformer import GeneralTransformer
 
 # CONFIG
-CHECKPOINT  = "rule30_rollout_pretrained.pt"
+CHECKPOINT  = ROLLOUT_WEIGHTS
 VOCAB_SIZE  = 3                 
-D_MODEL, NHEAD, NUM_LAYERS, DIM_FF = 256, 8, 6, 1024
 N           = 24                 
 ROWS        = 8                  
-BATCH_SIZE  = 128
-ITERS_PER_EPOCH = 80
-PROBE_EPOCHS = 25
-LR = 3e-4
 PROBE_LAYER = 5             
-TARGET = "cell_above" 
+TARGET = "cell_above"    ## or "neighborhood" (8-way)
 RULE_LUT = torch.tensor([0, 1, 1, 1, 1, 0, 0, 0], dtype=torch.long)
 
 
@@ -63,13 +59,13 @@ def capture_layer(model, layer_idx):
 def feature_stats(model, store, device, n_batches=6):
     s = ssq = count = 0.0
     for _ in range(n_batches):
-        seq, full_tgt, _ = make_batch(BATCH_SIZE, device)
+        seq, full_tgt, _ = make_batch(ProbeConfig.batch_size, device)
         x = seq[:, :-1]
         with autocast("cuda"):
             _ = model(x)
         h = store["h"]                                   
         valid = (full_tgt[:, 1:] != -1).reshape(-1)
-        f = h.reshape(-1, D_MODEL)[valid]
+        f = h.reshape(-1, ProbeConfig.d_model)[valid]
         s = s + f.sum(0); ssq = ssq + (f * f).sum(0); count += f.shape[0]
     mean = s / count
     std = torch.sqrt((ssq / count - mean ** 2).clamp_min(1e-6))
@@ -85,27 +81,27 @@ def run_probe(model, device, tag):
     _, _, n_classes = make_batch(2, device)
     mean, std = feature_stats(model, store, device)
 
-    probe = nn.Linear(D_MODEL, n_classes).to(device)     
-    opt = AdamW(probe.parameters(), lr=LR, weight_decay=0.01)
+    probe = nn.Linear(ProbeConfig.d_model, n_classes).to(device)     
+    opt = AdamW(probe.parameters(), lr=ProbeConfig.lr, weight_decay=0.01)
     crit = nn.CrossEntropyLoss()
 
     chance = 100.0 / n_classes
     print(f"\n=== probing {tag} | layer {PROBE_LAYER} | target = {TARGET} "
           f"({n_classes}-way, chance {chance:.1f}%) | offset N={N} ===")
     final_acc = 0.0
-    for epoch in range(PROBE_EPOCHS):
+    for epoch in range(ProbeConfig.epochs):
         probe.train()
         total_loss = 0.0
         correct = total = 0
-        for _ in range(ITERS_PER_EPOCH):
-            seq, full_tgt, _ = make_batch(BATCH_SIZE, device)
+        for _ in range(ProbeConfig.iters_per_epoch):
+            seq, full_tgt, _ = make_batch(ProbeConfig.batch_size, device)
             x = seq[:, :-1]
             with torch.no_grad(), autocast("cuda"):
                 _ = model(x)
             h = store["h"]                               
             targs = full_tgt[:, 1:]                      
             valid = (targs != -1).reshape(-1)
-            f = (h.reshape(-1, D_MODEL)[valid] - mean) / std
+            f = (h.reshape(-1, ProbeConfig.d_model)[valid] - mean) / std
             y = targs.reshape(-1)[valid]
 
             opt.zero_grad()
@@ -121,7 +117,7 @@ def run_probe(model, device, tag):
 
         final_acc = 100.0 * correct / total
         n_pred = len(torch.unique(preds))
-        print(f"  Probe Epoch [{epoch+1:2d}/{PROBE_EPOCHS}] | Loss: {total_loss/ITERS_PER_EPOCH:.4f} "
+        print(f"  Probe Epoch [{epoch+1:2d}/{ProbeConfig.epochs}] | Loss: {total_loss/ProbeConfig.iters_per_epoch:.4f} "
               f"| Probe Accuracy: {final_acc:6.2f}% | classes predicted: {n_pred}/{n_classes}")
 
     handle.remove()
@@ -129,8 +125,8 @@ def run_probe(model, device, tag):
 
 
 def load_rollout(device):
-    m = GeneralTransformer(vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD,
-                          num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
+    m = GeneralTransformer(vocab_size=VOCAB_SIZE, d_model=ProbeConfig.d_model, nhead=ProbeConfig.n_heads,
+                          num_layers=ProbeConfig.n_layers, dim_feedforward=ProbeConfig.dim_feedforward).to(device)
     sd = torch.load(CHECKPOINT, map_location=device)
     sd = {k.replace("module.", ""): v for k, v in sd.items()}
     m.load_state_dict(sd)
@@ -149,8 +145,8 @@ def main():
         return
     acc_trained, chance = run_probe(model, device, "ROLLOUT model")
 
-    rand = GeneralTransformer(vocab_size=VOCAB_SIZE, d_model=D_MODEL, nhead=NHEAD,
-                             num_layers=NUM_LAYERS, dim_feedforward=DIM_FF).to(device)
+    rand = GeneralTransformer(vocab_size=VOCAB_SIZE, d_model=ProbeConfig.d_model, nhead=ProbeConfig.n_heads,
+                             num_layers=ProbeConfig.n_layers, dim_feedforward=ProbeConfig.dim_feedforward).to(device)
     acc_random, _ = run_probe(rand, device, "RANDOM-init control")
 
     print(f"Long-range (row-above, offset N={N}) linear-probe @ layer {PROBE_LAYER} "

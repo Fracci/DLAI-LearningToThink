@@ -3,10 +3,18 @@ import os
 import torch
 import torch.nn.functional as F
 from collections import defaultdict
+import os
+import sys
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+root_dir = os.path.abspath(os.path.join(current_dir, ".."))
+if root_dir not in sys.path:
+    sys.path.insert(0, root_dir)
+
+from config import CARRYONLY_WEIGHTS, RULE30_WEIGHTS, ROLLOUT_WEIGHTS, SEEDS
 
 # CONFIG
-PRETRAINED   = "carryonly_pretrained.pt"     
-SEEDS        = [0, 1, 2, 3, 4]
+PRETRAINED   = CARRYONLY_WEIGHTS     
 A_PATTERN    = "Weights/Carryonly_seed{seed}_modelA.pt"
 B_PATTERN    = "Weights/seed{seed}_modelB.pt"    
 OUT_CSV      = "weight_distance_carryonly.csv"

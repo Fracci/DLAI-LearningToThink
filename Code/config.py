@@ -48,9 +48,22 @@ class FinetuneConfig:
     late_frac : float = 0.5##
 
 
-
 @dataclass(frozen=True)
 class ProbeConfig:
+    iters_per_epoch: int = 80##
+    d_model: int = 256##
+    n_heads: int = 8##
+    n_layers: int = 6##
+    dim_feedforward: int = 1024##
+    block_size: int = 128         # Maximum sequence context window
+    dropout: float = 0.1
+    epochs: int = 1
+    batch_size: int = 128##
+    num_samples: int = 20000
+    lr: float = 3e-4##
+    weight_decay: float = 0.2
+    grad_clip: float = 1.0
+
     layer_target: int = 3         # Target layer for internal state extraction
     probe_lr: float = 1e-3
-    probe_epochs: int = 25
+    epochs: int = 20##

@@ -13,6 +13,7 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from src.Transformer import GeneralTransformer
+from config import ModelConfig, RULE30_WEIGHTS, ROLLOUT_WEIGHTS, CARRYONLY_WEIGHTS
 from src.ArithmeticDataset import CharTokenizer
 
 # CONFIG
@@ -20,22 +21,16 @@ LAYER = 0   # change to change the layer
 EXPR  = "456+129=C0:6+9=5,C1:5+2=8,C0:4+1=5,A:585"
 
 RUNS = [
-    ("rule30_pretrained_new.pt",      True,  "A_before.png"),   
-    ("modelA_phase5_epoch_300.pt",    False, "A_after.png"),   
-    ("modelB_phase5_epoch_300.pt",    False, "B_after.png"),
+    (RULE30_WEIGHTS,      True,  "A_before.png"),   
+    ("Weights/Rule30_seed0_modelA.pt",    False, "A_after.png"),   
+    ("Weights/seed0_modelB.pt",    False, "B_after.png"),
 ]
-
-# Architecture
-D_MODEL = 256
-NHEAD = 8
-NUM_LAYERS = 6
-DIM_FEEDFORWARD = 1024
 
 
 def load_model(checkpoint_path, vocab_size, device, pretrained_rule30=False):
     model = GeneralTransformer(
-        vocab_size=vocab_size, d_model=D_MODEL, nhead=NHEAD,
-        num_layers=NUM_LAYERS, dim_feedforward=DIM_FEEDFORWARD,
+        vocab_size=vocab_size, d_model=ModelConfig.d_model, nhead=ModelConfig.n_heads,
+        num_layers=ModelConfig.n_layers, dim_feedforward=ModelConfig.dim_feedforward,
     ).to(device)
 
     sd = torch.load(checkpoint_path, map_location=device)
