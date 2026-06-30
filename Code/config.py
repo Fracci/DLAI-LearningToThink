@@ -9,6 +9,7 @@ SEEDS = [0, 1, 2, 3, 4]
 RULE30_WEIGHTS = "rule30_pretrained_new.pt"
 ROLLOUT_WEIGHTS = "rule30_rollout_pretrained.pt"
 CARRYONLY_WEIGHTS = "carryonly_pretrained.pt"
+CARRYONLY_WEIGHTS_LONG = "carryonly_pretrained_long.pt"
 
 
 @dataclass(frozen=True)

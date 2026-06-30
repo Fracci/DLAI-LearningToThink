@@ -14,9 +14,9 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from src.Transformer import GeneralTransformer
-from config import ModelConfig, EVAL_EVERY, CARRYONLY_WEIGHTS
+from config import ModelConfig, EVAL_EVERY, CARRYONLY_WEIGHTS_LONG
 from data_generation.CarryOnlyGenerator import (CarryOnlyDataset, compute_carry, assemble,
-                                 sample_ab, VOCAB, IGNORE, TARGET_ACTIVE)
+                                 sample_ab, VOCAB, IGNORE, TARGET_ACTIVE, GEN_DIST_MAX)
 
 
 def make_eval_batch(bs, min_n, max_n, chain_max, target_active, max_len, device):
@@ -63,15 +63,14 @@ def evaluate(model, device, cfg, n_batches=8, long_thresh=5):
 
 
 def train_carry():
-    MIN_N, MAX_N = 8, 24
-    CHAIN_MAX = 12
+    MIN_N, MAX_N = 16, 40
     LONG_THRESH = 5
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_gpu = torch.cuda.device_count()
     max_len = 3 * MAX_N + 2
     print(f"Carry-only pre-training on {device} ({n_gpu} GPU) | n {MIN_N}-{MAX_N} "
-          f"| chain_max {CHAIN_MAX} | active {TARGET_ACTIVE} | batch {ModelConfig.batch_size}")
+          f"| chain_max {GEN_DIST_MAX} | active {TARGET_ACTIVE} | batch {ModelConfig.batch_size}")
 
     model = GeneralTransformer(vocab_size=VOCAB, d_model=ModelConfig.d_model, nhead=ModelConfig.n_heads,
                               num_layers=ModelConfig.n_layers, dim_feedforward=ModelConfig.dim_feedforward).to(device)
@@ -79,7 +78,7 @@ def train_carry():
         print(f"Using {n_gpu} GPUs via DataParallel.")
         model = nn.DataParallel(model)
 
-    ds = CarryOnlyDataset(ModelConfig.num_samples, MIN_N, MAX_N, CHAIN_MAX, TARGET_ACTIVE)
+    ds = CarryOnlyDataset(ModelConfig.num_samples, MIN_N, MAX_N, GEN_DIST_MAX, TARGET_ACTIVE)
     loader = DataLoader(ds, batch_size=ModelConfig.batch_size, shuffle=True,
                         pin_memory=True, num_workers=2)
 
@@ -87,7 +86,7 @@ def train_carry():
     optimizer = AdamW(model.parameters(), lr=ModelConfig.lr, weight_decay=ModelConfig.weight_decay)
     scaler = GradScaler("cuda")
 
-    eval_cfg = dict(bs=256, min_n=MIN_N, max_n=MAX_N, chain_max=CHAIN_MAX,
+    eval_cfg = dict(bs=256, min_n=MIN_N, max_n=MAX_N, chain_max=GEN_DIST_MAX,
                     target_active=TARGET_ACTIVE, max_len=max_len)
 
     start = time.time()
