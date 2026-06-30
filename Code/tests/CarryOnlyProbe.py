@@ -178,8 +178,6 @@ def main():
     with open(OUT_CSV, "w", newline="") as f:
         csv.writer(f).writerows(rows)
     print(f"saved -> {OUT_CSV}")
-    print("Read the GAP (trained - random), NOT raw accuracy or chance: with "
-          "imbalanced latents the trivially-decodable floor sits well above chance.")
 
 
 if __name__ == "__main__":

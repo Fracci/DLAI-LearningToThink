@@ -142,8 +142,6 @@ def main():
     with open(OUT_CSV, "w", newline="") as f:
         csv.writer(f).writerows(rows)
     print(f"saved -> {OUT_CSV}")
-    print("Read the GAP (trained - random), not raw accuracy; the layer with the "
-          "largest gap is where the neighborhood world model is most decodable.")
 
 
 if __name__ == "__main__":
