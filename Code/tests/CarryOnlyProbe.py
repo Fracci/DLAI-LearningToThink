@@ -31,7 +31,7 @@ CHECKPOINT  = "carryonly_pretrained.pt"
 MIN_N, MAX_N = 8, 24
 CHAIN_MAX   = 12
 MAX_LEN     = 3 * MAX_N + 2
-TARGET      = "carry_in"      # "carry_in" (2-way) or "gen_dist" (GEN_DIST_MAX+1 way)
+TARGET      = "gen_dist"      # "carry_in" (2-way) or "gen_dist" (GEN_DIST_MAX+1 way)
 OUT_CSV     = f"carry_probe_layers_{TARGET}.csv"
 
 
@@ -107,7 +107,7 @@ def run_probe(model, device, layer_idx, tag):
         probe.train()
         total_loss = 0.0
         correct = total = 0
-        
+
         for _ in range(ProbeConfig.iters_per_epoch):
             seq, tgt = make_batch(ProbeConfig.batch_size, device)
             with torch.no_grad(), autocast("cuda"):

@@ -29,7 +29,7 @@ CHECKPOINT  = ROLLOUT_WEIGHTS
 VOCAB_SIZE  = 3
 N           = 24                 # row width = the long-range offset being probed
 ROWS        = 8
-TARGET      = "neighborhood"     # "neighborhood" (8-way) or "cell_above" (2-way)
+TARGET      = "cell_above"     # "neighborhood" (8-way) or "cell_above" (2-way)
 OUT_CSV     = f"rollout_probe_layers_{TARGET}.csv"
 RULE_LUT    = torch.tensor([0, 1, 1, 1, 1, 0, 0, 0], dtype=torch.long)
 
