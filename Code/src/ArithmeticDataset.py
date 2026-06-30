@@ -37,8 +37,10 @@ class CharTokenizer:
                     f"Encoded sequence length {len(indices)} exceeds max_len={max_len}. "
                     "Increase max_seq_len or reduce the generation length."
                 )
+            
             padding = [self.pad_idx] * (max_len - len(indices))
             indices = indices + padding
+            
         return torch.tensor(indices, dtype=torch.long)
 
     def decode(self, tensor):
