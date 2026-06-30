@@ -19,7 +19,7 @@ VOCAB_SIZE  = 3
 N           = 24                 
 ROWS        = 8                  
 PROBE_LAYER = 5             
-TARGET = "cell_above"    ## or "neighborhood" (8-way)
+TARGET = "neighborhood"    ## or "cell_above" (2-way)
 RULE_LUT = torch.tensor([0, 1, 1, 1, 1, 0, 0, 0], dtype=torch.long)
 
 

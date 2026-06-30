@@ -20,7 +20,7 @@ MIN_N, MAX_N = 8, 24
 CHAIN_MAX = 12             
 MAX_LEN = 3 * MAX_N + 2
 PROBE_LAYER = 3
-TARGET = "gen_dist"    # or "carry_in"            
+TARGET = "carry_in"    # or "gen_dist"            
 
 
 def make_batch(bs, device):
