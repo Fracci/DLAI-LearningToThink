@@ -19,7 +19,7 @@ class ModelConfig:
     n_layers: int = 6
     dim_feedforward: int = 1024
     dropout: float = 0.1
-    epochs: int = 1
+    epochs: int = 300
     batch_size: int = 256
     num_samples: int = 20000
     lr: float = 1e-3

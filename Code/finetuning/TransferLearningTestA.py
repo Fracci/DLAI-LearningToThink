@@ -19,12 +19,12 @@ from src.ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 
 # CONFIG
-PRETRAINED   = CARRYONLY_WEIGHTS     #Change here to change the pretrained model  
+PRETRAINED   = ROLLOUT_WEIGHTS     #Change here to change the pretrained model  
 VAL_SEED     = FinetuneConfig.val_seed
 N_ID_VAL     = 2000
 N_OOD_VAL    = 3000
 SAVE_CHECKPOINTS = True
-OUT_TAG      = "carryonly"           #Change here to change the output tag for the experiment   
+OUT_TAG      = "rollout"           #Change here to change the output tag for the experiment   
 
 
 def set_seed(s):
