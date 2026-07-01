@@ -4,9 +4,8 @@ RolloutProbe.py — linear-probe world-model test for the rollout pretrained mod
 Freezes the model and trains a linear probe to decode, for each cell, the
 row-ABOVE information at offset N (a long-range latent: the predicted cell's
 parents one full row back). Compares the trained model against a random-init
-control (the empirical floor); the gap is the result. Sweeps ALL layers and
-writes per-layer accuracies/gaps to CSV — long-range latents are expected to
-become decodable only in deeper layers, which the sweep makes visible.
+control (the empirical floor); the gap is the result. Long-range latents are 
+expected to become decodable only in deeper layers, which the sweep makes visible.
 """
 import csv
 import torch
@@ -29,7 +28,7 @@ CHECKPOINT  = ROLLOUT_WEIGHTS
 VOCAB_SIZE  = 3
 N           = 24                 # row width = the long-range offset being probed
 ROWS        = 8
-TARGET      = "cell_above"     # "neighborhood" (8-way) or "cell_above" (2-way)
+TARGET      = "cell_above"       # "neighborhood" (8-way) or "cell_above" (2-way)
 OUT_CSV     = f"rollout_probe_layers_{TARGET}.csv"
 RULE_LUT    = torch.tensor([0, 1, 1, 1, 1, 0, 0, 0], dtype=torch.long)
 
@@ -46,12 +45,14 @@ def make_batch(bs, device):
         left = torch.roll(row, 1, 1); right = torch.roll(row, -1, 1)
         row = RULE_LUT[left * 4 + row * 2 + right]
         grid.append(row)
+
     grid = torch.stack(grid, dim=1)                       # (bs, ROWS, N)
     seq = grid.reshape(bs, ROWS * N)                      # row-major flatten
 
     # target = property of the PREVIOUS row (offset N back) for every non-first row
     g_prev = grid[:, :-1, :]
     left = torch.roll(g_prev, 1, 2); right = torch.roll(g_prev, -1, 2)
+
     if TARGET == "cell_above":
         tgt_rows = g_prev                                 # the single cell directly above
         n_classes = 2
@@ -77,15 +78,18 @@ def capture_layer(model, layer_idx):
 def feature_stats(model, store, layer_idx, device, n_batches=6):
     """Estimate per-feature mean/std at a layer for standardizing probe inputs."""
     s = ssq = count = 0.0
+
     for _ in range(n_batches):
         seq, full_tgt, _ = make_batch(ProbeConfig.batch_size, device)
         x = seq[:, :-1]
+
         with autocast("cuda"):
             _ = model(x)
         h = store["h"]
         valid = (full_tgt[:, 1:] != -1).reshape(-1)
         f = h.reshape(-1, ProbeConfig.d_model)[valid]
         s = s + f.sum(0); ssq = ssq + (f * f).sum(0); count += f.shape[0]
+
     mean = s / count
     std = torch.sqrt((ssq / count - mean ** 2).clamp_min(1e-6))
     return mean, std
@@ -94,6 +98,7 @@ def feature_stats(model, store, layer_idx, device, n_batches=6):
 def run_probe(model, device, layer_idx, tag):
     """Train a standardized linear probe on one layer's activations; return accuracy."""
     model.eval()
+
     for p in model.parameters():
         p.requires_grad = False
     store, handle = capture_layer(model, layer_idx)
@@ -109,13 +114,16 @@ def run_probe(model, device, layer_idx, tag):
     print(f"\n=== probing {tag} | layer {layer_idx} | target = {TARGET} "
           f"({n_classes}-way, chance {chance:.1f}%) | offset N={N} ===")
     final_acc = 0.0
+
     for epoch in range(ProbeConfig.epochs):
         probe.train()
         total_loss = 0.0
         correct = total = 0
+
         for _ in range(ProbeConfig.iters_per_epoch):
             seq, full_tgt, _ = make_batch(ProbeConfig.batch_size, device)
             x = seq[:, :-1]
+
             with torch.no_grad(), autocast("cuda"):
                 _ = model(x)
             h = store["h"]
@@ -155,6 +163,8 @@ def load_rollout(device):
 
 
 def main():
+    """Sweep all layers, probe trained vs. random-init at each, and write the
+    per-layer trained/random/gap table to OUT_CSV."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Rollout layer-sweep probe on {device} | target={TARGET} | offset N={N}")
 

@@ -4,9 +4,8 @@ CarryOnlyProbe.py — linear-probe world-model test for the carry-only pretraine
 Freezes the model and trains a linear probe to decode a carry latent at each query
 position: either carry_in (2-way) or gen_dist, the distance back to the carry's
 generating cell (GEN_DIST_MAX+1 classes). Compares the trained model against a
-random-init control (the empirical floor); the gap is the result. Sweeps ALL
-layers and writes per-layer accuracies/gaps to CSV. gen_dist is the long-range
-latent and is clamped at GEN_DIST_MAX in the generator — keep the two in sync.
+random-init control (the empirical floor); the gap is the result, NOT raw accuracy,
+since both latents have high floors.
 """
 import csv
 import random
@@ -147,6 +146,8 @@ def load_carry(device):
 
 
 def main():
+    """Sweep all layers, probe trained vs. random-init at each, and write the
+    per-layer trained/random/gap table to OUT_CSV."""
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Carry-only layer-sweep probe on {device} | target={TARGET}")
 
@@ -156,7 +157,9 @@ def main():
     except Exception as e:
         print(f"Error loading {CHECKPOINT}: {e}")
         return
-    # random-init control built once; same architecture, untrained body.
+    
+    # random-init control built once; same architecture, untrained body — this is
+    # the empirical floor that turns raw probe accuracy into a meaningful gap.
     rand = GeneralTransformer(vocab_size=VOCAB, d_model=ProbeConfig.d_model, nhead=ProbeConfig.n_heads,
                               num_layers=ProbeConfig.n_layers, dim_feedforward=ProbeConfig.dim_feedforward).to(device)
 
@@ -166,6 +169,7 @@ def main():
     print(f"{'layer':<6}{'trained':>10}{'random':>10}{'gap':>10}")
     print("-" * 56)
     chance = None
+    
     for L in range(n_layers):
         acc_t, chance = run_probe(trained, device, L, f"CARRY  L{L}")
         acc_r, _      = run_probe(rand,    device, L, f"RANDOM L{L}")

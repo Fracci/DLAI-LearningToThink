@@ -1,3 +1,10 @@
+"""
+CarryOnlyPretraining.py — pretrains GeneralTransformer on the Carry-only task (the
+"long-range, variable-distance, structurally MATCHED" arm of the spectrum). Chains
+of carry-propagation are synthetically planted at controlled distances so the model
+must predict, per position, whether a carry survives (1) or is killed (0) — the same
+core operation the addition target needs, but isolated from digit arithmetic.
+"""
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -20,31 +27,43 @@ from data_generation.CarryOnlyGenerator import (CarryOnlyDataset, compute_carry,
 
 
 def make_eval_batch(bs, min_n, max_n, chain_max, target_active, max_len, device):
+    """Sample a fresh eval batch of (sequence, carry target, per-position gen_dist) triples."""
     seqs, targs, dists = [], [], []
+
     for _ in range(bs):
         n = random.randint(min_n, max_n)
         a, b = sample_ab(n, chain_max, target_active)
         seq, tgt = assemble(a, b, max_len, latent="carry_out")
         _, _, dist = compute_carry(a, b)
+
+        # dist is only defined over the n query positions; -1 elsewhere marks
+        # "not a query position" so it's easy to mask out below via q = tgt != IGNORE.
         dful = torch.full((max_len,), -1, dtype=torch.long)
         dful[2 * n + 2:2 * n + 2 + n] = dist
         seqs.append(seq); targs.append(tgt); dists.append(dful)
+
     return (torch.stack(seqs).to(device), torch.stack(targs).to(device),
             torch.stack(dists).to(device))
 
 
 @torch.no_grad()
 def evaluate(model, device, cfg, n_batches=8, long_thresh=5):
+    """Report overall acc, class-balanced acc (carry-out is imbalanced), recall on
+    the propagate class, and accuracy restricted to long-distance (>= long_thresh)
+    queries — the regime that actually stresses whether the model tracks chains
+    rather than pattern-matching short, common cases."""
     model.eval()
     tp1 = fn1 = tn0 = fp0 = 0
     correct = total = 0
     long_correct = long_total = 0
+
     for _ in range(n_batches):
         seq, tgt, dist = make_eval_batch(cfg["bs"], cfg["min_n"], cfg["max_n"],
                                          cfg["chain_max"], cfg["target_active"],
                                          cfg["max_len"], device)
         with autocast("cuda"):
             preds = torch.argmax(model(seq), dim=-1)
+
         q = tgt != IGNORE
         p = preds[q]; y = tgt[q]; d = dist[q]
         correct += (p == y).sum().item(); total += y.numel()
@@ -52,8 +71,12 @@ def evaluate(model, device, cfg, n_batches=8, long_thresh=5):
         fn1 += ((p != 1) & (y == 1)).sum().item()
         tn0 += ((p == 0) & (y == 0)).sum().item()
         fp0 += ((p != 0) & (y == 0)).sum().item()
+
+        # Balanced accuracy = mean of per-class recall, since carry-out is NOT
+        # 50/50 (raw accuracy alone can look high from majority-class guessing).
         lm = d >= long_thresh
         long_correct += (p[lm] == y[lm]).sum().item(); long_total += int(lm.sum())
+
     acc = 100.0 * correct / max(total, 1)
     rec1 = 100.0 * tp1 / max(tp1 + fn1, 1)
     rec0 = 100.0 * tn0 / max(tn0 + fp0, 1)
@@ -63,6 +86,8 @@ def evaluate(model, device, cfg, n_batches=8, long_thresh=5):
 
 
 def train_carry():
+    """Pretrain on carry-chain sequences and save Model A's weights, routing to the
+    standard or long-chain checkpoint path based on GEN_DIST_MAX (see module header)."""
     MIN_N, MAX_N = 16, 40
     LONG_THRESH = 5
 
@@ -78,6 +103,9 @@ def train_carry():
         print(f"Using {n_gpu} GPUs via DataParallel.")
         model = nn.DataParallel(model)
 
+    # TARGET_ACTIVE controls the carry-out class balance (see CarryOnlyGenerator);
+    # if this drifts from ~30-60% it reintroduces a majority-class confound into
+    # the balanced-accuracy metric above.
     ds = CarryOnlyDataset(ModelConfig.num_samples, MIN_N, MAX_N, GEN_DIST_MAX, TARGET_ACTIVE)
     loader = DataLoader(ds, batch_size=ModelConfig.batch_size, shuffle=True,
                         pin_memory=True, num_workers=2)
@@ -93,13 +121,16 @@ def train_carry():
     for epoch in range(ModelConfig.epochs):
         model.train()
         total_loss = 0.0
+
         for seq, target in loader:
             seq = seq.to(device, non_blocking=True)
             target = target.to(device, non_blocking=True)
             optimizer.zero_grad()
+
             with autocast("cuda"):
                 logits = model(seq)
                 loss = criterion(logits.reshape(-1, VOCAB), target.reshape(-1))
+                
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), ModelConfig.grad_clip)
@@ -115,7 +146,10 @@ def train_carry():
                   f"| long(>= {LONG_THRESH}) {long_acc:5.1f} | {el:4.1f}m")
 
     to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
-    
+
+    # Branch on GEN_DIST_MAX so the optional longer-chain sharpen (module header)
+    # saves to CARRYONLY_WEIGHTS_LONG and never clobbers the standard checkpoint
+    # that existing probes/transfer results were computed from.
     if GEN_DIST_MAX <= 16:
         torch.save(to_save, CARRYONLY_WEIGHTS)
         print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved {CARRYONLY_WEIGHTS}")

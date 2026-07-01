@@ -1,3 +1,11 @@
+"""
+RolloutPretraining.py — pretrains GeneralTransformer on the Rollout task (the
+"long-range but fixed-period" arm of the pretraining spectrum). Cells are generated
+by rolling out a fixed local update rule over many rows; the model must predict each
+next cell from a flattened row-major sequence, so long-range dependencies exist but
+recur at a fixed period rather than the variable carry-distance seen in the target
+task.
+"""
 import torch
 import torch.nn as nn
 from torch.optim import AdamW
@@ -18,9 +26,10 @@ from data_generation.RolloutGenerator import Rule30RolloutDataset, PAD_IDX
 
 
 def train_rollout():
-    VOCAB_SIZE = 3                       
-    MIN_N, MAX_N = 16, 32                
-    ROWS = 8                             
+    """Pretrain on fixed-period rollout sequences and save Model A's weights to ROLLOUT_WEIGHTS."""
+    VOCAB_SIZE = 3                       # {0, 1, PAD} — binary cell state + pad, not the addition vocab
+    MIN_N, MAX_N = 16, 32                # period range: row width sampled per-sequence in [MIN_N, MAX_N)
+    ROWS = 8                             # rollout depth; max_len below assumes worst case MAX_N*ROWS
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_gpu = torch.cuda.device_count()
@@ -33,6 +42,8 @@ def train_rollout():
         print(f"Using {n_gpu} GPUs via DataParallel.")
         model = nn.DataParallel(model)
 
+    # Rule30RolloutDataset handles the variable-period generation and returns a
+    # boolean mask so loss/accuracy exclude first-row cells and right-padding.
     dataset = Rule30RolloutDataset(ModelConfig.num_samples, MIN_N, MAX_N, ROWS, pad_idx=PAD_IDX)
     loader = DataLoader(dataset, batch_size=ModelConfig.batch_size, shuffle=True,
                         pin_memory=True, num_workers=2)
@@ -46,16 +57,22 @@ def train_rollout():
         model.train()
         total_loss = 0.0
         correct = total = 0
+
         for x, y, mask in loader:
             x = x.to(device, non_blocking=True)
             y = y.to(device, non_blocking=True)
             mask = mask.to(device, non_blocking=True)
+
+            # Masked-out positions (first row / pad) are relabeled to PAD_IDX so
+            # CrossEntropyLoss's ignore_index drops them from the loss too, not
+            # just from the accuracy tally below.
             y_loss = torch.where(mask, y, torch.full_like(y, PAD_IDX))
 
             optimizer.zero_grad()
             with autocast("cuda"):
                 logits = model(x)
                 loss = criterion(logits.reshape(-1, VOCAB_SIZE), y_loss.reshape(-1))
+                
             scaler.scale(loss).backward()
             scaler.unscale_(optimizer)
             nn.utils.clip_grad_norm_(model.parameters(), ModelConfig.grad_clip)
@@ -71,6 +88,8 @@ def train_rollout():
             print(f"Epoch [{epoch+1:3d}/{ModelConfig.epochs}] | Loss {total_loss/len(loader):.4f} "
                   f"| Rollout next-token acc {100.0*correct/total:6.2f}% | {elapsed:5.1f} min")
 
+    # Unwrap DataParallel before saving so downstream loaders (probes, transfer
+    # scripts) get a plain state_dict without "module." key prefixes.
     to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
     torch.save(to_save, ROLLOUT_WEIGHTS)
     print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved {ROLLOUT_WEIGHTS}")
