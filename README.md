@@ -87,7 +87,18 @@ DLAI-LearningToThink/
 │       ├── PositionalAccuracy.py # → pos_fig_per_arm / overlay_6dig / overlay_7dig / heatmap
 │       └── FreeRun.py            # → fr_fig_tf_vs_free / drop / free_pd_parseable
 ├── Weights/                      # checkpoints (NOT committed — see §5)
+│   ├── baseline/                 # seed{0..4}_modelB.pt
+│   ├── carryonly/                # carryonly_seed{0..4}_modelA.pt
+│   ├── pretraining/              # the three arms' pretrained Model-A checkpoints
+│   ├── rollout/                  # Rollout_seed{0..4}_modelA.pt
+│   └── rule30/                   # Rule30_seed{0..4}_modelA.pt
 ├── Results/                      # CSV/XLSX outputs the plotting scripts read
+│   ├── FreeRun/                  # freerun_results(_summary).csv          → read by plotting/FreeRun.py
+│   ├── Logs/                     # per-seed seed{N}_log.csv (loss)        → read by plotting/TrainingMetrics.py (fig_loss)
+│   ├── PositionalAccuracy/       # *_positional_accuracy.csv per arm      → read by plotting/PositionalAccuracy.py
+│   ├── Training/                 # full_results.xlsx, results_summary.xlsx → read by plotting/TrainingMetrics.py
+│   ├── WeightDistance/           # weight_distance_<arm>(_summary).csv    → read by plotting/WeightDistance.py
+│   └── probe_results.xlsx        # aggregated layer-sweep probe CSVs      → read by plotting/Probes.py
 ├── Plots/                        # generated figures
 └── Reference Papers/             # related-work PDFs (Zhang et al. CA-pretraining, extrapolation-
                                    #   by-association, Abacus/position-coupling, induction heads, ...)
@@ -98,6 +109,15 @@ DLAI-LearningToThink/
 > `A_PATTERN` / `B_PATTERN`, `finetuning/TransferLearningTestAB.py`'s `PRETRAINED` /
 > `OUT_TAG`). If your `Weights/` tree is laid out differently from §5, edit those
 > constants rather than moving files.
+>
+> **Note on CSV outputs.** The training/probe/eval/weight-distance scripts (§3.2–3.5)
+> write their CSVs to the **current working directory**, not directly into the
+> `Results/*` subfolders above. After running each stage, move its output into the
+> matching `Results/` subfolder (e.g. `freerun_results.csv` → `Results/FreeRun/`,
+> `weight_distance_*_summary.csv` → `Results/WeightDistance/`, `seed{N}_log.csv` →
+> `Results/Logs/`, `*_positional_accuracy.csv` → `Results/PositionalAccuracy/`,
+> `full_results.xlsx`/`results_summary.xlsx` → `Results/Training/`) before running the
+> corresponding `plotting/*.py` script, which reads from those fixed `INDIR` locations.
 
 ---
 
@@ -211,18 +231,18 @@ output in LaTeX.
 
 ## 4. Script → result mapping
 
-| Script | Role | Reads | Writes |
+| Script | Role | Reads | Writes (→ move into) |
 |--------|------|-------|--------|
 | `Code/pretraining/*PreTraining.py` | pretrain Model A | generators | `Weights/pretraining/*.pt` |
-| `Code/finetuning/TransferLearningTestAB.py` | fine-tune A (+B), `TRAIN_B` flag | pretrained `*.pt` | `seed{N}_log.csv`, `seed{N}_modelA/B.pt`, `seed_sweep_summary.csv`, `positional_accuracy.csv` |
-| `Code/finetuning/FreeRunEval.py` | autoregressive eval + TF drop | fine-tuned `*.pt` | `freerun_results(_summary).csv` |
-| `Code/tests/*Probe.py` | layer-sweep linear probe | pretrained `*.pt` | `*_probe_layers_*.csv` |
-| `Code/tests/WeightDistanceTest.py` | retention margin (compute only) | `*_modelA/B.pt`, pretrained | `weight_distance_<arm>(_summary).csv` |
-| `Code/plotting/Probes.py` | figures | `probe_results.xlsx` | `fig_gap_by_layer` + 3 others |
-| `Code/plotting/WeightDistance.py` | figures | `weight_distance_*_summary.csv` | `wd_fig_*` |
-| `Code/plotting/TrainingMetrics.py` | figures | `full_results.xlsx`, `results_summary.xlsx`, seed logs | `tr_fig_*` |
-| `Code/plotting/PositionalAccuracy.py` | figures | `*_positional_accuracy.csv` | `pos_fig_*` |
-| `Code/plotting/FreeRun.py` | figures | `freerun_results.csv` | `fr_fig_*` |
+| `Code/finetuning/TransferLearningTestAB.py` | fine-tune A (+B), `TRAIN_B` flag | pretrained `*.pt` | `seed{N}_log.csv` → `Results/Logs/`; `seed{N}_modelA/B.pt` → `Weights/<arm>/`; `seed_sweep_summary.csv` → `Results/Training/`; `positional_accuracy.csv` → `Results/PositionalAccuracy/` |
+| `Code/finetuning/FreeRunEval.py` | autoregressive eval + TF drop | fine-tuned `*.pt` from `Weights/<arm>/` | `freerun_results(_summary).csv` → `Results/FreeRun/` |
+| `Code/tests/*Probe.py` | layer-sweep linear probe | pretrained `*.pt` | `*_probe_layers_*.csv` → aggregate into `Results/probe_results.xlsx` |
+| `Code/tests/WeightDistanceTest.py` | retention margin (compute only) | `*_modelA/B.pt`, pretrained | `weight_distance_<arm>(_summary).csv` → `Results/WeightDistance/` |
+| `Code/plotting/Probes.py` | figures | `Results/probe_results.xlsx` | `Plots/Probes/fig_gap_by_layer` + 3 others |
+| `Code/plotting/WeightDistance.py` | figures | `Results/WeightDistance/weight_distance_*_summary.csv` | `Plots/WeightDistance/wd_fig_*` |
+| `Code/plotting/TrainingMetrics.py` | figures | `Results/Training/full_results.xlsx`, `results_summary.xlsx`; `Results/Logs/seed*_log.csv` | `Plots/TrainingResults/tr_fig_*` |
+| `Code/plotting/PositionalAccuracy.py` | figures | `Results/PositionalAccuracy/*_positional_accuracy.csv` | `Plots/PositionalAccuracy/pos_fig_*` |
+| `Code/plotting/FreeRun.py` | figures | `Results/FreeRun/freerun_results.csv` | `Plots/FreeRun/fr_fig_*` |
 
 **Aggregated result workbooks** (`Results/`): `full_results.xlsx` (raw per-seed/epoch
 EM & PD), `results_summary.xlsx` (windowed gap-over-baseline), `probe_results.xlsx`
