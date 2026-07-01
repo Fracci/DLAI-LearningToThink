@@ -14,17 +14,17 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from src.Transformer import GeneralTransformer
-from config import FinetuneConfig, EVAL_EVERY, CARRYONLY_WEIGHTS, RULE30_WEIGHTS, ROLLOUT_WEIGHTS, OOD_DIGITS, SEEDS
+from config import FinetuneConfig, EVAL_EVERY, CARRYONLY_WEIGHTS, CARRYONLY_WEIGHTS_LONG, RULE30_WEIGHTS, ROLLOUT_WEIGHTS, OOD_DIGITS, SEEDS
 from src.ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 
 # CONFIG
-PRETRAINED   = ROLLOUT_WEIGHTS     #Change here to change the pretrained model  
+PRETRAINED   = CARRYONLY_WEIGHTS_LONG     #Change here to change the pretrained model  
 VAL_SEED     = FinetuneConfig.val_seed
 N_ID_VAL     = 2000
 N_OOD_VAL    = 3000
 SAVE_CHECKPOINTS = True
-OUT_TAG      = "rollout"           #Change here to change the output tag for the experiment   
+OUT_TAG      = "carryonly_long"           #Change here to change the output tag for the experiment   
 
 
 def set_seed(s):
