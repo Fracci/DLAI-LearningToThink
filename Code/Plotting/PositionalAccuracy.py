@@ -141,7 +141,7 @@ def fig_heatmap(data):
 def main():
     data = {}
     for fn, name, _ in ARMS:
-        if os.path.exists(os.path.join(OUTDIR, fn)):
+        if os.path.exists(os.path.join(INDIR, fn)):
             data[name] = load(fn)
         else:
             print(f"  [skip] {name}: {fn} not found")
