@@ -32,6 +32,7 @@ from data_generation.Rule30Generator import Rule30Dataset
 
 def train():
     """Pretrain on single-step Rule 30 and save the transformer body for transfer."""
+    
     VOCAB_SIZE = 2
     SEQ_LENGTH = 256
 

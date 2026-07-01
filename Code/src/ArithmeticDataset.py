@@ -28,6 +28,7 @@ class CharTokenizer:
 
     def encode(self, text, max_len=None):
         """Encode a string to a 1-D LongTensor, optionally right-padded to max_len."""
+
         indices = [self.char_to_idx[c] for c in text]
         if max_len is not None:
             # Hard boundary: a sequence longer than max_len is a fatal error rather
@@ -45,6 +46,7 @@ class CharTokenizer:
 
     def decode(self, tensor):
         """Decode a tensor of ids back to a string, dropping PAD tokens."""
+
         chars = [self.idx_to_char[idx.item()] for idx in tensor if idx.item() != self.pad_idx]
         return "".join(chars)
 
@@ -64,6 +66,7 @@ class ScratchpadAdditionDataset(Dataset):
 
     def generate_scratchpad(self, n1, n2):
         """Build the full 'n1+n2=...,A:answer' string with per-digit carry steps (LSB first)."""
+
         # Reverse both operands so index 0 is the least-significant digit, and
         # zero-pad the shorter one so the column loop is uniform.
         s1, s2 = str(n1)[::-1], str(n2)[::-1]
@@ -73,6 +76,7 @@ class ScratchpadAdditionDataset(Dataset):
 
         carry = 0
         steps = []
+
         # One scratchpad step per digit column: "C<carry_in>:d1+d2=<remainder>".
         for i in range(max_len):
             d1 = int(s1[i])
@@ -94,6 +98,7 @@ class ScratchpadAdditionDataset(Dataset):
 
     def __getitem__(self, idx):
         """Sample a random addition problem and return (x, y) shifted by one token."""
+        
         # Operand lengths are drawn INDEPENDENTLY in [min_digits, max_digits],
         # so the dataset is a mixture of digit-length combinations (documented).
         n1 = random.randint(10**(self.min_digits-1), 10**self.max_digits - 1)

@@ -28,6 +28,7 @@ from data_generation.CarryOnlyGenerator import (CarryOnlyDataset, compute_carry,
 
 def make_eval_batch(bs, min_n, max_n, chain_max, target_active, max_len, device):
     """Sample a fresh eval batch of (sequence, carry target, per-position gen_dist) triples."""
+
     seqs, targs, dists = [], [], []
 
     for _ in range(bs):
@@ -49,9 +50,8 @@ def make_eval_batch(bs, min_n, max_n, chain_max, target_active, max_len, device)
 @torch.no_grad()
 def evaluate(model, device, cfg, n_batches=8, long_thresh=5):
     """Report overall acc, class-balanced acc (carry-out is imbalanced), recall on
-    the propagate class, and accuracy restricted to long-distance (>= long_thresh)
-    queries — the regime that actually stresses whether the model tracks chains
-    rather than pattern-matching short, common cases."""
+    the propagate class, and accuracy restricted to long-distance (>= long_thresh) queries."""
+
     model.eval()
     tp1 = fn1 = tn0 = fp0 = 0
     correct = total = 0
@@ -88,12 +88,14 @@ def evaluate(model, device, cfg, n_batches=8, long_thresh=5):
 def train_carry():
     """Pretrain on carry-chain sequences and save Model A's weights, routing to the
     standard or long-chain checkpoint path based on GEN_DIST_MAX (see module header)."""
+
     MIN_N, MAX_N = 16, 40
     LONG_THRESH = 5
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     n_gpu = torch.cuda.device_count()
     max_len = 3 * MAX_N + 2
+    
     print(f"Carry-only pre-training on {device} ({n_gpu} GPU) | n {MIN_N}-{MAX_N} "
           f"| chain_max {GEN_DIST_MAX} | active {TARGET_ACTIVE} | batch {ModelConfig.batch_size}")
 

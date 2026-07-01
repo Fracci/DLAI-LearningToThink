@@ -64,6 +64,7 @@ class GeneralTransformer(nn.Module):
         plus a per-head linear distance penalty (ALiBi). Rebuilt every forward;
         fine for these sequence lengths but is the main avoidable compute cost.
         """
+
         causal_mask = nn.Transformer.generate_square_subsequent_mask(seq_len).to(device)
 
         # ALiBi slopes, one per head. NOTE: this is the power-of-2 formula only.
@@ -89,6 +90,7 @@ class GeneralTransformer(nn.Module):
 
     def forward(self, src):
         """Embed tokens, run causal+ALiBi attention, return per-position vocab logits."""
+        
         batch_size, seq_len = src.shape
 
         # Scale embeddings by sqrt(d_model), standard Transformer convention.

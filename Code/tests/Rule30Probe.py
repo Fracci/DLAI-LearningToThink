@@ -34,6 +34,7 @@ N_CLASSES   = 8                 # neighborhood is a 3-bit pattern -> 8 classes
 
 def neighborhood_targets(state_t):
     """Per-position 3-bit label of the left-anchored neighborhood [i-2,i-1,i] (0..7)."""
+
     c0 = torch.roll(state_t, shifts=2, dims=1)
     c1 = torch.roll(state_t, shifts=1, dims=1)
     c2 = state_t
@@ -42,15 +43,18 @@ def neighborhood_targets(state_t):
 
 def capture_layer(transformer, layer_idx):
     """Register a forward hook that stores layer `layer_idx`'s output (as fp32)."""
+
     store = {}
     def hook(_m, _i, out):
         store["h"] = out.detach().float()
+
     handle = transformer.transformer.layers[layer_idx].register_forward_hook(hook)
     return store, handle
 
 
 def run_probe(transformer, device, layer_idx, tag):
     """Train a linear probe on one layer's activations; return final accuracy."""
+
     transformer.eval()
     for p in transformer.parameters():
         p.requires_grad = False
@@ -103,6 +107,7 @@ def run_probe(transformer, device, layer_idx, tag):
 
 def load_trained(device):
     """Load the Rule30-pretrained model, stripping any DataParallel prefix."""
+
     m = GeneralTransformer(vocab_size=2, d_model=ProbeConfig.d_model, nhead=ProbeConfig.n_heads,
                            num_layers=ProbeConfig.n_layers, dim_feedforward=ProbeConfig.dim_feedforward).to(device)
     sd = torch.load(CHECKPOINT, map_location=device)
@@ -131,12 +136,14 @@ def main():
     print("\n" + "=" * 56)
     print(f"{'layer':<6}{'trained':>10}{'random':>10}{'gap':>10}")
     print("-" * 56)
+
     for L in range(n_layers):
         acc_t = run_probe(trained, device, L, f"TRAINED  L{L}")
         acc_r = run_probe(rand,    device, L, f"RANDOM   L{L}")
         gap = acc_t - acc_r
         rows.append([L, f"{acc_t:.2f}", f"{acc_r:.2f}", f"{gap:.2f}", f"{chance:.2f}"])
         print(f"{L:<6}{acc_t:>10.2f}{acc_r:>10.2f}{gap:>+10.2f}")
+        
     print("=" * 56)
 
     with open(OUT_CSV, "w", newline="") as f:

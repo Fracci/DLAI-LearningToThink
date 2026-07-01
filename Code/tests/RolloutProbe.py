@@ -39,6 +39,7 @@ def make_batch(bs, device):
     Returns (seq, full_tgt, n_classes). full_tgt[-1]=-1 marks positions with no
     defined row-above (the first row); those are excluded from the probe.
     """
+
     row = torch.randint(0, 2, (bs, N), dtype=torch.long)
     grid = [row]
     for _ in range(ROWS - 1):
@@ -67,6 +68,7 @@ def make_batch(bs, device):
 
 def capture_layer(model, layer_idx):
     """Register a forward hook that stores layer `layer_idx`'s output (as fp32)."""
+
     store = {}
     def hook(_m, _i, out):
         store["h"] = out.detach().float()
@@ -77,6 +79,7 @@ def capture_layer(model, layer_idx):
 @torch.no_grad()
 def feature_stats(model, store, layer_idx, device, n_batches=6):
     """Estimate per-feature mean/std at a layer for standardizing probe inputs."""
+
     s = ssq = count = 0.0
 
     for _ in range(n_batches):
@@ -97,6 +100,7 @@ def feature_stats(model, store, layer_idx, device, n_batches=6):
 
 def run_probe(model, device, layer_idx, tag):
     """Train a standardized linear probe on one layer's activations; return accuracy."""
+
     model.eval()
 
     for p in model.parameters():
@@ -154,6 +158,7 @@ def run_probe(model, device, layer_idx, tag):
 
 def load_rollout(device):
     """Load the rollout-pretrained model, stripping any DataParallel prefix."""
+
     m = GeneralTransformer(vocab_size=VOCAB_SIZE, d_model=ProbeConfig.d_model, nhead=ProbeConfig.n_heads,
                            num_layers=ProbeConfig.n_layers, dim_feedforward=ProbeConfig.dim_feedforward).to(device)
     sd = torch.load(CHECKPOINT, map_location=device)
@@ -165,6 +170,7 @@ def load_rollout(device):
 def main():
     """Sweep all layers, probe trained vs. random-init at each, and write the
     per-layer trained/random/gap table to OUT_CSV."""
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Rollout layer-sweep probe on {device} | target={TARGET} | offset N={N}")
 
@@ -184,6 +190,7 @@ def main():
     print(f"{'layer':<6}{'trained':>10}{'random':>10}{'gap':>10}")
     print("-" * 56)
     chance = None
+    
     for L in range(n_layers):
         acc_t, chance = run_probe(trained, device, L, f"ROLLOUT L{L}")
         acc_r, _      = run_probe(rand,    device, L, f"RANDOM  L{L}")

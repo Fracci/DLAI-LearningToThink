@@ -41,6 +41,7 @@ class Rule30Dataset(Dataset):
 
 
 if __name__ == "__main__":
+    
     # Quick check: print a small batch of (t) inputs and their (t+1) targets.
     SEQ_LENGTH = 16
     BATCH_SIZE = 4

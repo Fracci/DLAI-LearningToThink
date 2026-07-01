@@ -1,3 +1,10 @@
+"""
+TransferLearningTestA.py — trains ONLY Model A (pretrained) across all SEEDS on 
+the scratchpad-addition target, evaluating in-distribution and OOD (5/6/7-digit)
+after every EVAL_EVERY epochs. Used for the A-only variants where there's no 
+need to retrain the shared random-init baseline B — that comes from
+TransferLearningTestAB.py's paired run instead.
+"""
 import random
 import csv
 import torch
@@ -28,55 +35,81 @@ OUT_TAG      = "carryonly_long"           #Change here to change the output tag 
 
 
 def set_seed(s):
+    """Seed python/torch/cuda RNGs together so a seed sweep is actually reproducible."""
+
     random.seed(s); torch.manual_seed(s); torch.cuda.manual_seed_all(s)
 
 
 def build_loss_targets(x, y, eq_idx, pad_idx):
+    """Mask the loss to positions at/after '=' — the model isn't trained to
+    predict the (already-given) problem statement, only the scratchpad+answer."""
+
     L = x.size(1)
     pos = torch.arange(L, device=x.device).unsqueeze(0)
     eq_col = (x == eq_idx).long().argmax(dim=1, keepdim=True)
+
     return torch.where(pos >= eq_col, y, torch.full_like(y, pad_idx))
 
 
 def answer_region(y, a_idx, pad_idx):
+    """Boolean mask over the final-answer digits only (after 'A:'), used for EM/PD
+    metrics — scratchpad reasoning steps are excluded from the reported accuracy."""
+
     L = y.size(1)
     pos = torch.arange(L, device=y.device).unsqueeze(0)
     a_col = (y == a_idx).long().argmax(dim=1, keepdim=True)
+
     return (pos >= (a_col + 2)) & (y != pad_idx)
 
 
 def materialize_loader(tok, min_d, max_d, n, max_seq_len, seed, batch):
+    """Pre-generate a FIXED eval set (seeded) so every seed/epoch is scored on
+    the identical id/OOD problems."""
+
     random.seed(seed)
     ds = ScratchpadAdditionDataset(num_samples=n, min_digits=min_d, max_digits=max_d,
                                    tokenizer=tok, max_seq_len=max_seq_len)
     xs, ys = zip(*(ds[i] for i in range(n)))
+
     return DataLoader(TensorDataset(torch.stack(xs), torch.stack(ys)), batch_size=batch)
 
 
 @torch.no_grad()
 def eval_metrics(model, loader, a_idx, pad_idx, device):
+    """Exact-Match (whole final answer correct) and Per-Digit accuracy over the
+    answer region only."""
+
     model.eval()
     em_c = em_t = dig_c = dig_t = 0
+
     for x, y in loader:
         x = x.to(device, non_blocking=True); y = y.to(device, non_blocking=True)
         with autocast("cuda"):
             preds = torch.argmax(model(x), dim=-1)
+
         ans = answer_region(y, a_idx, pad_idx); match = (preds == y)
         row_ok = (match | ~ans).all(dim=1) & ans.any(dim=1)
         em_c += row_ok.sum().item(); em_t += ans.any(dim=1).sum().item()
         dig_c += (match & ans).sum().item(); dig_t += ans.sum().item()
+
     return 100.0 * em_c / em_t, 100.0 * dig_c / dig_t
 
 
 @torch.no_grad()
 def positional_accuracy(model, loader, a_idx, pad_idx, device, max_pos=FinetuneConfig.max_pos):
+    """Per-digit accuracy binned by distance from the LSB (last answer column),
+    counting BACKWARD from the final digit so units/top digits align across
+    different-length answers."""
+
     model.eval()
     correct = torch.zeros(max_pos, dtype=torch.long)
     total = torch.zeros(max_pos, dtype=torch.long)
+
     for x, y in loader:
         x = x.to(device, non_blocking=True); y = y.to(device, non_blocking=True)
         with autocast("cuda"):
             preds = torch.argmax(model(x), dim=-1)
+
         ans = answer_region(y, a_idx, pad_idx); match = (preds == y)
         L = y.size(1)
         col = torch.arange(L, device=y.device).unsqueeze(0).expand_as(y)
@@ -86,25 +119,38 @@ def positional_accuracy(model, loader, a_idx, pad_idx, device, max_pos=FinetuneC
         rr = r[sel]; mm = match[sel]
         total += torch.bincount(rr.cpu(), minlength=max_pos)
         correct += torch.bincount(rr[mm].cpu(), minlength=max_pos)
+
     return [(100.0 * correct[i].item() / total[i].item()) if total[i] > 0 else float("nan")
             for i in range(max_pos)]
 
 
 def build_A(vocab, device):
+    """Build Model A: init from PRETRAINED, dropping embedding/fc_out and loading 
+    the rest of the transformer body strict=False."""
+
     m = GeneralTransformer(vocab, FinetuneConfig.d_model, FinetuneConfig.n_heads, FinetuneConfig.n_layers, FinetuneConfig.dim_feedforward).to(device)
     sd = torch.load(PRETRAINED, map_location=device)
     sd = {k.replace("module.", ""): v for k, v in sd.items()}
     sd = {k: v for k, v in sd.items()
           if not k.startswith("embedding.") and not k.startswith("fc_out.")}
     m.load_state_dict(sd, strict=False)
+
     return m
 
 
 def build_B(vocab, device):
+    """Random-init baseline architecture, same shape as A. 
+    Built but unused here kept only so this script's structure mirrors
+    TransferLearningTestAB.py for easy comparison; A-only sweeps don't train it."""
+
     return GeneralTransformer(vocab, FinetuneConfig.d_model, FinetuneConfig.n_heads, FinetuneConfig.n_layers, FinetuneConfig.dim_feedforward).to(device)
 
 
 def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
+    """Finetune Model A for one seed, logging loss + per-eval-set EM/PD every
+    EVAL_EVERY epochs to a per-seed CSV, then writing positional accuracy and
+    the final checkpoint."""
+
     set_seed(seed)
     PAD, EQ, A_IDX = tok.pad_idx, tok.char_to_idx["="], tok.char_to_idx["A"]
     labels = list(eval_loaders.keys())
@@ -114,8 +160,12 @@ def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
     train_loader = DataLoader(train_ds, batch_size=FinetuneConfig.batch_size, shuffle=True, pin_memory=True)
 
     model_A = build_A(tok.vocab_size, device)
+
+    # Model B is built and immediately discarded — see build_B docstring; kept
+    # only for structural parity with the paired A+B script, not used further.
     _model_B_unused = build_B(tok.vocab_size, device)
     del _model_B_unused
+
     if torch.cuda.device_count() > 1:
         model_A = nn.DataParallel(model_A)
 
@@ -133,12 +183,15 @@ def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
     for epoch in range(FinetuneConfig.epochs):
         model_A.train()
         loss_sum_A = 0.0
+
         for x, y in train_loader:
             x = x.to(device, non_blocking=True); y = y.to(device, non_blocking=True)
             yl = build_loss_targets(x, y, EQ, PAD)
             opt_A.zero_grad()
+
             with autocast("cuda"):
                 lA = crit(model_A(x).reshape(-1, tok.vocab_size), yl.reshape(-1))
+
             sc_A.scale(lA).backward(); sc_A.unscale_(opt_A)
             nn.utils.clip_grad_norm_(model_A.parameters(), FinetuneConfig.grad_clip)
             sc_A.step(opt_A); sc_A.update()
@@ -148,6 +201,7 @@ def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
             avg_A = loss_sum_A / len(train_loader)
             print(f"  seed {seed} ep {epoch+1:4d}/{FinetuneConfig.epochs} | loss A {avg_A:.4f}")
             row = [epoch + 1, f"{avg_A:.4f}"]
+
             for lab in labels:
                 a_em, a_pd = eval_metrics(model_A, eval_loaders[lab], A_IDX, PAD, device)
                 history[lab]["A_em"].append(a_em); history[lab]["A_pd"].append(a_pd)
@@ -162,9 +216,13 @@ def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
         for p in range(FinetuneConfig.max_pos):
             pos_writer.writerow([seed, lab, "A", p, f"{pa_A[p]:.2f}"])
 
+    # NOTE: unlike the A+B script, DataParallel is not unwrapped before saving
+    # here; downstream loaders strip "module." prefixes on load.
     if SAVE_CHECKPOINTS:
         torch.save(model_A.state_dict(), f"{OUT_TAG}_seed{seed}_modelA.pt")
 
+    # late_frac-windowed average — smooths over the noisy end-of-training trajectory
+    # so the reported per-seed score isn't a lucky/unlucky single checkpoint.
     scores = {}
     for lab in labels:
         k = max(1, int(len(history[lab]["A_em"]) * FinetuneConfig.late_frac))
@@ -173,13 +231,19 @@ def train_one_seed(seed, eval_loaders, tok, device, pos_writer):
 
 
 def mean_std(xs):
+    """Population mean/std across the seed list."""
+
     m = sum(xs) / len(xs)
     return m, (sum((x - m) ** 2 for x in xs) / len(xs)) ** 0.5
 
 
 def main():
+    """Build fixed id/OOD eval sets, run train_one_seed for every seed in SEEDS, 
+    and write the seed-averaged summary CSV plus per-seed positional accuracy CSV."""
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     tok = CharTokenizer()
+
     print(f"A-ONLY sweep on {device} | seeds={SEEDS} | epochs={FinetuneConfig.epochs} | tag={OUT_TAG}")
 
     eval_loaders = {"id": materialize_loader(tok, 3, 4, N_ID_VAL, FinetuneConfig.max_seq_len,
@@ -198,10 +262,12 @@ def main():
         print(f"\n========== SEED {s} ==========")
         per_seed[s] = train_one_seed(s, eval_loaders, tok, device, pos_writer)
         pos_file.flush()
+
     pos_file.close()
 
     print("AGGREGATE — A only (mean +/- std across seeds)")
     rows = [["eval_set", "metric", "A_mean", "A_std"]]
+
     for lab in labels:
         for metric, ak in (("EM", "A_em"), ("PD", "A_pd")):
             A = [per_seed[s][lab][ak] for s in SEEDS]
@@ -212,6 +278,7 @@ def main():
 
     with open(f"{OUT_TAG}_seed_sweep_summary.csv", "w", newline="") as f:
         csv.writer(f).writerows(rows)
+        
     print(f"saved -> {OUT_TAG}_seed_sweep_summary.csv, {OUT_TAG}_positional_accuracy.csv, "
           f"{OUT_TAG}_seed{{N}}_log.csv")
 

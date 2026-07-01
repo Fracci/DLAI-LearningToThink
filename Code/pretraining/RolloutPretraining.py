@@ -3,8 +3,7 @@ RolloutPretraining.py — pretrains GeneralTransformer on the Rollout task (the
 "long-range but fixed-period" arm of the pretraining spectrum). Cells are generated
 by rolling out a fixed local update rule over many rows; the model must predict each
 next cell from a flattened row-major sequence, so long-range dependencies exist but
-recur at a fixed period rather than the variable carry-distance seen in the target
-task.
+recur at a fixed period rather than the variable carry-distance seen in the target task.
 """
 import torch
 import torch.nn as nn
@@ -27,6 +26,7 @@ from data_generation.RolloutGenerator import Rule30RolloutDataset, PAD_IDX
 
 def train_rollout():
     """Pretrain on fixed-period rollout sequences and save Model A's weights to ROLLOUT_WEIGHTS."""
+    
     VOCAB_SIZE = 3                       # {0, 1, PAD} — binary cell state + pad, not the addition vocab
     MIN_N, MAX_N = 16, 32                # period range: row width sampled per-sequence in [MIN_N, MAX_N)
     ROWS = 8                             # rollout depth; max_len below assumes worst case MAX_N*ROWS

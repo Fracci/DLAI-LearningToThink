@@ -36,8 +36,8 @@ OUT_CSV     = f"carry_probe_layers_{TARGET}.csv"
 
 def make_batch(bs, device):
     """Sample a batch of carry-only sequences with the chosen latent as the target."""
-    seqs, targs = [], []
 
+    seqs, targs = [], []
     for _ in range(bs):
         n = random.randint(MIN_N, MAX_N)
         a, b = sample_ab(n, CHAIN_MAX, TARGET_ACTIVE)
@@ -49,8 +49,8 @@ def make_batch(bs, device):
 
 def capture_layer(model, layer_idx):
     """Register a forward hook that stores layer `layer_idx`'s output (as fp32)."""
-    store = {}
 
+    store = {}
     def hook(_m, _i, out):
         store["h"] = out.detach().float()
 
@@ -60,14 +60,15 @@ def capture_layer(model, layer_idx):
 
 def n_classes_for(target):
     """Class count for the probe: carry_in is binary; gen_dist is the clamped range."""
+
     return 2 if target == "carry_in" else (GEN_DIST_MAX + 1)
 
 
 @torch.no_grad()
 def feature_stats(model, store, device, n_batches=6):
     """Estimate per-feature mean/std at the hooked layer for standardizing inputs."""
-    s = ssq = count = 0.0
 
+    s = ssq = count = 0.0
     for _ in range(n_batches):
         seq, tgt = make_batch(ProbeConfig.batch_size, device)
         with autocast("cuda"):
@@ -84,6 +85,7 @@ def feature_stats(model, store, device, n_batches=6):
 
 def run_probe(model, device, layer_idx, tag):
     """Train a standardized linear probe on one layer's activations; return accuracy."""
+
     model.eval()
 
     for p in model.parameters():
@@ -137,6 +139,7 @@ def run_probe(model, device, layer_idx, tag):
 
 def load_carry(device):
     """Load the carry-only pretrained model, stripping any DataParallel prefix."""
+
     m = GeneralTransformer(vocab_size=VOCAB, d_model=ProbeConfig.d_model, nhead=ProbeConfig.n_heads,
                            num_layers=ProbeConfig.n_layers, dim_feedforward=ProbeConfig.dim_feedforward).to(device)
     sd = torch.load(CHECKPOINT, map_location=device)
@@ -148,6 +151,7 @@ def load_carry(device):
 def main():
     """Sweep all layers, probe trained vs. random-init at each, and write the
     per-layer trained/random/gap table to OUT_CSV."""
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Carry-only layer-sweep probe on {device} | target={TARGET}")
 

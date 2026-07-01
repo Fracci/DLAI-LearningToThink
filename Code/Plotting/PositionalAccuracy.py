@@ -1,12 +1,11 @@
 """
-plot_positional.py — answer-digit accuracy by position, from the *_positional_accuracy.csv files.
+PositionalAccuracy.py — reads the *_positional_accuracy.csv files
+(written by TransferSweep.py / SeedSweepA.py) and produces answer-digit-
+accuracy-by-position figures. No training or evaluation logic here.
 
 Position 0 = least-significant answer digit (units); higher = more-significant.
-Reveals WHERE along the answer each model fails OOD. The expected carry-propagation
-signature is a dip in the MIDDLE digits (where carries must chain across the unseen
-extra length), with units and top digits staying high. Produces per-length curves
+Reveals WHERE along the answer each model fails OOD. Produces per-length curves
 per arm, an arm-overlay at the decisive 6-digit length, and an accuracy heatmap.
-ROLLOUT is included but commented out until its CSV exists (see ARMS).
 """
 import os
 import csv
@@ -21,11 +20,13 @@ OUTDIR = "Plots/PositionalAccuracy"
 INDIR = "Results/PositionalAccuracy"
 DPI = 300
 
-# arm -> (csv filename, pretty name, color)
+# arm -> (csv filename, pretty name, color). All three arms now have CSVs
+# present (rollout_positional_accuracy.csv included below); main() skips
+# gracefully with a printed note if any file is missing.
 ARMS = [
     ("Rule30_positional_accuracy.csv",     "Rule30 (local)",   "#d1495b"),
     ("carryonly_positional_accuracy.csv",  "Carry (matched)",  "#1b9e77"),
-    # ("rollout_positional_accuracy.csv",  "Rollout (mismatched)", "#6a3d9a"),  # ROLLOUT: uncomment when CSV exists
+    ("rollout_positional_accuracy.csv",  "Rollout (mismatched)", "#6a3d9a"),
 ]
 OOD = ["5dig", "6dig", "7dig"]   # 'id' is ~100% everywhere; shown only in the per-arm grid
 
@@ -40,7 +41,9 @@ plt.rcParams.update({
 
 
 def load(fn):
-    """Return {eval_set: {pos: (mean, std)}} averaged over seeds (skips nan)."""
+    """Read one *_positional_accuracy.csv -> {eval_set: {pos: (mean, std)}},
+    averaged over seeds. Rows with nan/empty accuracy are skipped."""
+
     acc = defaultdict(lambda: defaultdict(list))
     for r in csv.DictReader(open(os.path.join(INDIR, fn))):
         v = r["accuracy"]
@@ -50,6 +53,7 @@ def load(fn):
             acc[r["eval_set"]][int(r["pos_from_LSB"])].append(float(v))
         except ValueError:
             continue
+
     out = {}
     for es, posmap in acc.items():
         out[es] = {p: (st.mean(vs), st.pstdev(vs) if len(vs) > 1 else 0.0)
@@ -58,9 +62,11 @@ def load(fn):
 
 
 def series(es_map, es):
-    """Sorted (positions, means, stds) for one eval set."""
+    """Sorted (positions, means, stds) for one eval set; empty lists if absent."""
+
     if es not in es_map:
         return [], [], []
+    
     ps = sorted(es_map[es])
     means = [es_map[es][p][0] for p in ps]
     stds = [es_map[es][p][1] for p in ps]
@@ -68,22 +74,28 @@ def series(es_map, es):
 
 
 def fig_per_arm_grid(data):
-    """One panel per arm: accuracy vs position, one line per OOD length."""
+    """One panel per arm: accuracy vs position, one line per OOD length (+ 'id')
+    with a shaded ±std band — the full per-arm view of the positional profile."""
+
     arms = list(data.keys())
     fig, axes = plt.subplots(1, len(arms), figsize=(7.0 * len(arms), 5.6), squeeze=False)
     length_colors = {"id": "#999999", "5dig": "#4c9f70", "6dig": "#e08214", "7dig": "#b2182b"}
+
     for ax, (name, es_map) in zip(axes[0], data.items()):
         for es in ["id"] + OOD:
             ps, means, stds = series(es_map, es)
             if not ps:
                 continue
+
             ax.plot(ps, means, "-o", color=length_colors[es], lw=2.6, ms=6, label=es)
             lo = [m - s for m, s in zip(means, stds)]; hi = [m + s for m, s in zip(means, stds)]
             ax.fill_between(ps, lo, hi, color=length_colors[es], alpha=0.12, linewidth=0)
+
         ax.set_title(name); ax.set_xlabel("answer position (0 = units →)")
         ax.set_ylabel("digit accuracy (%)"); ax.set_ylim(0, 103)
         ax.xaxis.set_major_locator(MaxNLocator(integer=True))
         ax.legend(title="length", loc="lower left")
+
     fig.suptitle("Answer-digit accuracy by position — the middle-digit dip is the carry-chain failure",
                  fontsize=17, fontweight="bold", y=1.02)
     fig.tight_layout()
@@ -92,45 +104,57 @@ def fig_per_arm_grid(data):
 
 
 def fig_arms_overlay(data, es="6dig"):
-    """All arms on one axis at the decisive length, to compare positional profiles."""
+    """All arms overlaid on one axis at a single eval_set (default 6-digit,
+    the decisive OOD length), for direct cross-arm shape comparison."""
+
     fig, ax = plt.subplots(figsize=(10, 6))
+
     for (name, es_map), (_, _, color) in zip(data.items(), ARMS):
         ps, means, stds = series(es_map, es)
         if not ps:
             continue
+
         ax.plot(ps, means, "-o", color=color, lw=3.0, ms=7, label=name)
         lo = [m - s for m, s in zip(means, stds)]; hi = [m + s for m, s in zip(means, stds)]
         ax.fill_between(ps, lo, hi, color=color, alpha=0.12, linewidth=0)
+
     ax.set_title(f"{es}: answer-digit accuracy by position (mean ± seed std)")
     ax.set_xlabel("answer position (0 = units, → more significant)")
     ax.set_ylabel("digit accuracy (%)"); ax.set_ylim(0, 103)
     ax.xaxis.set_major_locator(MaxNLocator(integer=True))
     ax.legend(loc="lower left")
+
     fig.tight_layout()
     fig.savefig(os.path.join(OUTDIR, f"pos_fig_overlay_{es}.png"), dpi=DPI, bbox_inches="tight")
     plt.close(fig)
 
 
 def fig_heatmap(data):
-    """Heatmap per arm: rows = OOD length, cols = position, color = accuracy."""
+    """One heatmap panel per arm: rows = OOD length, columns = position, color/
+    text = accuracy — a compact "where does it fail" summary across all arms."""
+
     arms = list(data.items())
     fig, axes = plt.subplots(1, len(arms), figsize=(7.2 * len(arms), 4.2), squeeze=False)
     maxpos = max((p for _, em in arms for es in OOD for p in (em.get(es, {}) or {})), default=7) + 1
+
     for ax, (name, es_map) in zip(axes[0], arms):
         grid = []
         for es in OOD:
             rowvals = [es_map.get(es, {}).get(p, (float("nan"),))[0] for p in range(maxpos)]
             grid.append(rowvals)
+
         im = ax.imshow(grid, aspect="auto", cmap="RdYlGn", vmin=0, vmax=100)
         ax.set_xticks(range(maxpos)); ax.set_xticklabels(range(maxpos))
         ax.set_yticks(range(len(OOD))); ax.set_yticklabels(OOD)
         ax.set_xlabel("answer position (0 = units →)"); ax.set_title(name)
+
         for i in range(len(OOD)):
             for j in range(maxpos):
                 v = grid[i][j]
                 if v == v:  # not nan
                     ax.text(j, i, f"{v:.0f}", ha="center", va="center",
                             fontsize=9, color="black")
+                    
     fig.colorbar(im, ax=axes[0].tolist(), shrink=0.8, label="digit accuracy (%)")
     fig.suptitle("Where the answer breaks: accuracy heatmap (length × position)",
                  fontsize=16, fontweight="bold", y=1.05)
@@ -139,14 +163,21 @@ def fig_heatmap(data):
 
 
 def main():
+    """Load whichever ARMS' CSVs exist (printing a skip note for any missing)
+    and generate the per-arm grid, two overlay figures (6/7-digit), and the
+    heatmap. Pure plotting entry point."""
+    
     data = {}
+
     for fn, name, _ in ARMS:
         if os.path.exists(os.path.join(INDIR, fn)):
             data[name] = load(fn)
         else:
             print(f"  [skip] {name}: {fn} not found")
+
     if not data:
         print("No positional CSVs found."); return
+    
     fig_per_arm_grid(data)
     fig_arms_overlay(data, "6dig")
     fig_arms_overlay(data, "7dig")

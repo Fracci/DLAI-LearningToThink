@@ -1,3 +1,9 @@
+"""
+WeightDistance.py — measures how much of Model A's (pretrained-init) weights
+survive finetuning, relative to Model B (random-init baseline), via cosine
+similarity to the pretrained checkpoint. Run once per arm over all 5 seeds at a
+MATCHED epoch count (300) so retention is comparable across arms. 
+"""
 import csv
 import os
 import torch
@@ -13,48 +19,65 @@ if root_dir not in sys.path:
 
 from config import CARRYONLY_WEIGHTS, RULE30_WEIGHTS, ROLLOUT_WEIGHTS, SEEDS
 
-# CONFIG
-PRETRAINED   = CARRYONLY_WEIGHTS     
+# CONFIG — swap these three to switch which arm this script measures
+PRETRAINED   = CARRYONLY_WEIGHTS
 A_PATTERN    = "Weights/Carryonly_seed{seed}_modelA.pt"
-B_PATTERN    = "Weights/seed{seed}_modelB.pt"    
+B_PATTERN    = "Weights/seed{seed}_modelB.pt"
 OUT_CSV      = "weight_distance_carryonly.csv"
 
 
 def load(path):
+    """Load a checkpoint to CPU as fp32, stripping any DataParallel prefix."""
+
     sd = torch.load(path, map_location="cpu")
     return {k.replace("module.", ""): v.float() for k, v in sd.items()}
 
 
 def is_body(k):
+    """Keep only transformer-body parameters (excludes embedding/fc_out, which
+    aren't shared across pretraining vocab sizes and aren't the transfer claim)."""
+
     return k.startswith("transformer.") or k.startswith("final_norm.")
 
 
 def cos(a, b):
+    """Cosine similarity between two flattened tensors."""
+
     return F.cosine_similarity(a.flatten().unsqueeze(0), b.flatten().unsqueeze(0)).item()
 
 
 def rel_l2(a, b):
+    """Relative L2 distance ||a-b|| / ||b||, a magnitude-normalized complement to cosine."""
+
     return (torch.norm(a - b) / (torch.norm(b) + 1e-12)).item()
 
 
 def layer_of(k):
+    """Map a parameter key to a human-readable layer label for the per-layer table."""
+
     if k.startswith("transformer.layers."):
         return f"layer {k.split('.')[2]}"
     return "final_norm"
 
 
 def order(lg):
+    """Sort key so layer labels print in numeric order with final_norm last."""
+
     return 999 if lg == "final_norm" else int(lg.split()[1])
 
 
 def run_one_seed(seed, pre):
+    """Compute per-layer and global cos(A,pre)/cos(B,pre)/cos(A,B) + relL2(A,pre) for one seed."""
+
     a_path = A_PATTERN.format(seed=seed)
     b_path = B_PATTERN.format(seed=seed)
+
     if not (os.path.exists(a_path) and os.path.exists(b_path)):
         print(f"  [seed {seed}] missing checkpoint(s): "
               f"{'' if os.path.exists(a_path) else a_path} "
               f"{'' if os.path.exists(b_path) else b_path}".rstrip())
         return None
+    
     A, B = load(a_path), load(b_path)
     keys = [k for k in pre if is_body(k) and k in A and k in B]
     if not keys:
@@ -63,6 +86,7 @@ def run_one_seed(seed, pre):
 
     per_layer = defaultdict(lambda: defaultdict(list))
     per_param = []
+
     for k in keys:
         cA = cos(A[k], pre[k]); cB = cos(B[k], pre[k]); cAB = cos(A[k], B[k])
         lA = rel_l2(A[k], pre[k]); lg = layer_of(k)
@@ -76,12 +100,15 @@ def run_one_seed(seed, pre):
     glob = {"A_pre": cos(flat(A), flat(pre)),
             "B_pre": cos(flat(B), flat(pre)),
             "A_B":   cos(flat(A), flat(B))}
+    
     # collapse per-layer lists to means for this seed
     layer_means = {lg: {m: sum(v) / len(v) for m, v in d.items()} for lg, d in per_layer.items()}
     return layer_means, glob, per_param
 
 
 def mean_std(xs):
+    """Population mean/std over a list, NaN-safe for empty input, 0-std for n=1."""
+
     if not xs: return (float("nan"), float("nan"))
     m = sum(xs) / len(xs)
     if len(xs) == 1: return (m, 0.0)
@@ -89,6 +116,10 @@ def mean_std(xs):
 
 
 def main():
+    """Sweep SEEDS, accumulate per-layer/global cosine stats, print a summary
+    table, and write both a per-seed/per-param CSV and a seed-averaged
+    per-layer summary CSV."""
+
     if not os.path.exists(PRETRAINED):
         print(f"Pretrained checkpoint not found: {PRETRAINED}")
         return
@@ -105,13 +136,17 @@ def main():
         res = run_one_seed(s, pre)
         if res is None:
             continue
+
         layer_means, glob, per_param = res
         seeds_done.append(s)
+
         for lg, d in layer_means.items():
             for m, v in d.items():
                 layer_acc[lg][m].append(v)
+
         for m, v in glob.items():
             glob_acc[m].append(v)
+
         all_param_rows.extend(per_param)
         print(f"  [seed {s}] global cos(A,pre)={glob['A_pre']:.4f}  "
               f"cos(B,pre)={glob['B_pre']:.4f}  cos(A,B)={glob['A_B']:.4f}")
@@ -124,33 +159,41 @@ def main():
     print(f"Per-layer cosine, mean +/- std over {len(seeds_done)} seeds {seeds_done}")
     print(f"{'layer':<12}{'cos(A,pre)':>16}{'cos(B,pre)':>16}{'cos(A,B)':>16}{'relL2(A,pre)':>16}")
     print("-" * 78)
+
     summary_rows = [["layer", "cosA_pre_mean", "cosA_pre_std",
                      "cosB_pre_mean", "cosB_pre_std",
                      "cosA_B_mean", "cosA_B_std",
                      "relL2_mean", "relL2_std"]]
+    
     for lg in sorted(layer_acc, key=order):
         am, asd = mean_std(layer_acc[lg]["A_pre"])
         bm, bsd = mean_std(layer_acc[lg]["B_pre"])
         abm, absd = mean_std(layer_acc[lg]["A_B"])
         lm, lsd = mean_std(layer_acc[lg]["relL2"])
+
         print(f"{lg:<12}{am:>9.3f}±{asd:<5.3f}{bm:>9.3f}±{bsd:<5.3f}"
               f"{abm:>9.3f}±{absd:<5.3f}{lm:>9.3f}±{lsd:<5.3f}")
         summary_rows.append([lg, f"{am:.4f}", f"{asd:.4f}", f"{bm:.4f}", f"{bsd:.4f}",
                              f"{abm:.4f}", f"{absd:.4f}", f"{lm:.4f}", f"{lsd:.4f}"])
+        
     print("-" * 78)
     gA = mean_std(glob_acc["A_pre"]); gB = mean_std(glob_acc["B_pre"]); gAB = mean_std(glob_acc["A_B"])
     print(f"{'GLOBAL':<12}{gA[0]:>9.3f}±{gA[1]:<5.3f}{gB[0]:>9.3f}±{gB[1]:<5.3f}"
           f"{gAB[0]:>9.3f}±{gAB[1]:<5.3f}")
+    
     summary_rows.append(["GLOBAL", f"{gA[0]:.4f}", f"{gA[1]:.4f}", f"{gB[0]:.4f}", f"{gB[1]:.4f}",
                          f"{gAB[0]:.4f}", f"{gAB[1]:.4f}", "", ""])
     print("=" * 78)
 
+    # NOTE: this A-vs-B comparison is WITHIN one arm's own pretrained init only.
     print("\nReading it:")
     print(f"  cos(A_after, pretrained) = {gA[0]:.4f} ± {gA[1]:.4f}")
     print(f"  cos(B_after, pretrained) = {gB[0]:.4f} ± {gB[1]:.4f}   <- unrelated-model baseline")
+
     if gA[0] > gB[0] + 0.05:
         print("  => A stays markedly closer to its pretrained init than B does:")
         print("     pretraining was NOT erased — directional structure retained.")
+
     else:
         print("  => A is about as close to the init as B is: heavy forgetting")
         print("     (any transfer benefit is basin/bias-level, not a preserved circuit).")
@@ -160,6 +203,7 @@ def main():
         w = csv.writer(f)
         w.writerow(["seed", "param", "cos_A_pre", "cos_B_pre", "cos_A_B", "relL2_A_pre"])
         w.writerows(all_param_rows)
+        
     summ_path = OUT_CSV.replace(".csv", "_summary.csv")
     with open(summ_path, "w", newline="") as f:
         csv.writer(f).writerows(summary_rows)

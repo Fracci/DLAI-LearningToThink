@@ -22,6 +22,7 @@ GEN_DIST_MAX = 24         # gen_dist labels clamped to [0, GEN_DIST_MAX] -> 13 c
 
 def sample_ab(n, chain_max=12, target_active=TARGET_ACTIVE):
     """Build two bit-strings a,b whose addition contains planted, variable-length carry chains."""
+
     a = torch.zeros(n, dtype=torch.long)
     b = torch.zeros(n, dtype=torch.long)
 
@@ -64,6 +65,7 @@ def sample_ab(n, chain_max=12, target_active=TARGET_ACTIVE):
 
 def compute_carry(a, b):
     """Return (carry_out, carry_in, gen_dist) per column; gen_dist = distance back to the carry's origin."""
+
     n = len(a)
     cout = torch.zeros(n, dtype=torch.long)
     cin = torch.zeros(n, dtype=torch.long)
@@ -93,6 +95,7 @@ def compute_carry(a, b):
 
 def assemble(a, b, max_len, latent="carry_out", gen_dist_max=GEN_DIST_MAX):
     """Pack a,b into the [a|SEP|b|SEP|QUERY...] sequence and build the latent target at query positions."""
+
     n = len(a)
     cout, cin, dist = compute_carry(a, b)
 
@@ -135,6 +138,7 @@ class CarryOnlyDataset(Dataset):
 
     def __getitem__(self, idx):
         """Sample a variable length n, plant chains, and return (seq, carry_out target)."""
+
         n = random.randint(self.min_n, self.max_n)
         a, b = sample_ab(n, self.chain_max, self.target_active)
         seq, target = assemble(a, b, self.max_len, latent="carry_out")
@@ -143,6 +147,7 @@ class CarryOnlyDataset(Dataset):
 
 def _balance(vals):
     """Count carry-out==1 vs total (used by the sanity check to verify label balance)."""
+    
     ones = int((vals == 1).sum()); tot = len(vals)
     return ones, tot
 
