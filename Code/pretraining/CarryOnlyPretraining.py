@@ -14,7 +14,7 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from src.Transformer import GeneralTransformer
-from config import ModelConfig, EVAL_EVERY, CARRYONLY_WEIGHTS_LONG
+from config import ModelConfig, EVAL_EVERY, CARRYONLY_WEIGHTS, CARRYONLY_WEIGHTS_LONG
 from data_generation.CarryOnlyGenerator import (CarryOnlyDataset, compute_carry, assemble,
                                  sample_ab, VOCAB, IGNORE, TARGET_ACTIVE, GEN_DIST_MAX)
 
@@ -115,8 +115,14 @@ def train_carry():
                   f"| long(>= {LONG_THRESH}) {long_acc:5.1f} | {el:4.1f}m")
 
     to_save = model.module.state_dict() if isinstance(model, nn.DataParallel) else model.state_dict()
-    torch.save(to_save, CARRYONLY_WEIGHTS)
-    print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved {CARRYONLY_WEIGHTS}")
+    
+    if GEN_DIST_MAX <= 16:
+        torch.save(to_save, CARRYONLY_WEIGHTS)
+        print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved {CARRYONLY_WEIGHTS}")
+
+    else:
+        torch.save(to_save, CARRYONLY_WEIGHTS_LONG)
+        print(f"\nDone in {(time.time()-start)/60:.1f} min. Saved {CARRYONLY_WEIGHTS_LONG}")
 
 if __name__ == "__main__":
     train_carry()
