@@ -6,10 +6,10 @@ EVAL_EVERY = 5
 OOD_DIGITS = [5, 6, 7]
 SEEDS = [0, 1, 2, 3, 4]
 
-RULE30_WEIGHTS = "rule30_pretrained_new.pt"
-ROLLOUT_WEIGHTS = "rule30_rollout_pretrained.pt"
-CARRYONLY_WEIGHTS = "carryonly_pretrained.pt"
-CARRYONLY_WEIGHTS_LONG = "carryonly_pretrained_long.pt"
+RULE30_WEIGHTS = "Weights/pretraining/rule30_pretrained_new.pt"
+ROLLOUT_WEIGHTS = "Weights/pretraining/rule30_rollout_pretrained.pt"
+CARRYONLY_WEIGHTS = "Weights/pretraining/carryonly_pretrained.pt"
+CARRYONLY_WEIGHTS_LONG = "Weights/pretraining/carryonly_pretrained_long.pt"
 
 
 @dataclass(frozen=True)

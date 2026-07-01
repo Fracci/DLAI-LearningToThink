@@ -25,10 +25,10 @@ VAL_SEED     = FinetuneConfig.val_seed
 WEIGHTS_DIR  = "Weights"       
 
 CHECKPOINTS = {
-    "Rule30": "Rule30_seed{seed}_modelA.pt",
-    "Rollout": "Rollout_seed{seed}_modelA.pt",
-    "Carry":   "carryonly_seed{seed}_modelA.pt",
-    "Baseline": "seed{seed}_modelB.pt",
+    "Rule30": "rule30/Rule30_seed{seed}_modelA.pt",
+    "Rollout": "rollout/Rollout_seed{seed}_modelA.pt",
+    "Carry":   "carryonly/carryonly_seed{seed}_modelA.pt",
+    "Baseline": "baseline/seed{seed}_modelB.pt",
 }
 OUT_CSV = "freerun_results.csv"
 
