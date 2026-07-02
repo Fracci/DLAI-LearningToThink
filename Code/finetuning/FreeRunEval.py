@@ -21,7 +21,7 @@ if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
 from src.Transformer import GeneralTransformer
-from config import FinetuneConfig, OOD_DIGITS, SEEDS
+from config import FinetuneConfig, OOD_DIGITS, SEEDS, RULE30_SEED_WEIGHTS, ROLLOUT_SEED_WEIGHTS, CARRYONLY_SEED_WEIGHTS, BASELINE_SEED_WEIGHTS
 from src.ArithmeticDataset import CharTokenizer, ScratchpadAdditionDataset
 
 # CONFIG
@@ -29,13 +29,12 @@ N_EVAL       = 400
 MAX_NEW_TOKENS = 140           
 GEN_MAX_SEQ_LEN = 200          
 VAL_SEED     = FinetuneConfig.val_seed
-WEIGHTS_DIR  = "Weights"       
 
 CHECKPOINTS = {
-    "Rule30": "rule30/Rule30_seed{seed}_modelA.pt",
-    "Rollout": "rollout/Rollout_seed{seed}_modelA.pt",
-    "Carry":   "carryonly/carryonly_seed{seed}_modelA.pt",
-    "Baseline": "baseline/seed{seed}_modelB.pt",
+    "Rule30": RULE30_SEED_WEIGHTS,
+    "Rollout": ROLLOUT_SEED_WEIGHTS,
+    "Carry":   CARRYONLY_SEED_WEIGHTS,
+    "Baseline": BASELINE_SEED_WEIGHTS,
 }
 OUT_CSV = "freerun_results.csv"
 
@@ -257,8 +256,8 @@ def main():
 
     for label, pat in CHECKPOINTS.items():
         for s in SEEDS:
-            path = os.path.join(WEIGHTS_DIR, pat.format(seed=s))
-
+            path = pat.format(seed=s)
+            
             if not os.path.exists(path):
                 print(f"  [skip] {label} seed {s}: {path} not found")
                 continue

@@ -19,7 +19,12 @@ SEEDS = [0, 1, 2, 3, 4]         # the 5 seeds all headline results are averaged 
 RULE30_WEIGHTS = "Weights/pretraining/rule30_pretrained_new.pt"
 ROLLOUT_WEIGHTS = "Weights/pretraining/rule30_rollout_pretrained.pt"
 CARRYONLY_WEIGHTS = "Weights/pretraining/carryonly_pretrained.pt"
-CARRYONLY_WEIGHTS_LONG = "Weights/pretraining/carryonly_pretrained_long.pt"
+
+# Seed-specific Model-A and Model-B checkpoints after finetuning
+RULE30_SEED_WEIGHTS = "Weights/rule30/Rule30_seed{seed}_modelA.pt"
+ROLLOUT_SEED_WEIGHTS = "Weights/rollout/Rollout_seed{seed}_modelA.pt"
+CARRYONLY_SEED_WEIGHTS = "Weights/carryonly/carryonly_seed{seed}_modelA.pt"
+BASELINE_SEED_WEIGHTS = "Weights/baseline/seed{seed}_modelB.pt" 
 
 
 @dataclass(frozen=True)
@@ -57,7 +62,6 @@ class FinetuneConfig:
     weight_decay: float = 0.1
     grad_clip: float = 1.0
     lr: float = 5e-4
-    seeds: List[int] = field(default_factory=lambda: [0, 1, 2, 3, 4])
     val_seed: int = 20240601      # fixed, distinct from training seeds so val problems don't leak into training
     max_pos : int = 12
     max_seq_len : int = 128       # must fit the longest in-distribution (3-4 digit) scratchpad string

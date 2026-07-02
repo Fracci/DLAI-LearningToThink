@@ -23,12 +23,15 @@ if root_dir not in sys.path:
 
 from src.Transformer import GeneralTransformer
 from config import ProbeConfig, CARRYONLY_WEIGHTS
-from data_generation.CarryOnlyGenerator import sample_ab, assemble, VOCAB, IGNORE, TARGET_ACTIVE, GEN_DIST_MAX
+from data_generation.CarryOnlyGenerator import sample_ab, assemble, VOCAB, IGNORE, TARGET_ACTIVE, GEN_DIST_MAX, LONG_VARIANT
 
 # CONFIG
-CHECKPOINT  = "carryonly_pretrained.pt"
-MIN_N, MAX_N = 8, 24
-CHAIN_MAX   = 12
+if LONG_VARIANT:
+    MIN_N, MAX_N = 16, 40
+else:
+    MIN_N, MAX_N = 8, 24
+    
+CHAIN_MAX   = GEN_DIST_MAX
 MAX_LEN     = 3 * MAX_N + 2
 TARGET      = "gen_dist"      # "carry_in" (2-way) or "gen_dist" (GEN_DIST_MAX+1 way)
 OUT_CSV     = f"carry_probe_layers_{TARGET}.csv"
@@ -142,7 +145,7 @@ def load_carry(device):
 
     m = GeneralTransformer(vocab_size=VOCAB, d_model=ProbeConfig.d_model, nhead=ProbeConfig.n_heads,
                            num_layers=ProbeConfig.n_layers, dim_feedforward=ProbeConfig.dim_feedforward).to(device)
-    sd = torch.load(CHECKPOINT, map_location=device)
+    sd = torch.load(CARRYONLY_WEIGHTS, map_location=device)
     sd = {k.replace("module.", ""): v for k, v in sd.items()}
     m.load_state_dict(sd)
     return m
@@ -159,7 +162,7 @@ def main():
         trained = load_carry(device)
         print("Loaded carry-only pretrained weights.")
     except Exception as e:
-        print(f"Error loading {CHECKPOINT}: {e}")
+        print(f"Error loading {CARRYONLY_WEIGHTS}: {e}")
         return
     
     # random-init control built once; same architecture, untrained body — this is

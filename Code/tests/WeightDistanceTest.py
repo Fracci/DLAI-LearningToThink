@@ -17,12 +17,12 @@ root_dir = os.path.abspath(os.path.join(current_dir, ".."))
 if root_dir not in sys.path:
     sys.path.insert(0, root_dir)
 
-from config import CARRYONLY_WEIGHTS, RULE30_WEIGHTS, ROLLOUT_WEIGHTS, SEEDS
+from config import CARRYONLY_WEIGHTS, RULE30_WEIGHTS, ROLLOUT_WEIGHTS, SEEDS, RULE30_SEED_WEIGHTS, ROLLOUT_SEED_WEIGHTS, CARRYONLY_SEED_WEIGHTS, BASELINE_SEED_WEIGHTS
 
 # CONFIG — swap these three to switch which arm this script measures
 PRETRAINED   = CARRYONLY_WEIGHTS
-A_PATTERN    = "Weights/Carryonly_seed{seed}_modelA.pt"
-B_PATTERN    = "Weights/seed{seed}_modelB.pt"
+A_PATTERN    = CARRYONLY_SEED_WEIGHTS
+B_PATTERN    = BASELINE_SEED_WEIGHTS
 OUT_CSV      = "weight_distance_carryonly.csv"
 
 

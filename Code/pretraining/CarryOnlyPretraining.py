@@ -23,7 +23,7 @@ if root_dir not in sys.path:
 from src.Transformer import GeneralTransformer
 from config import ModelConfig, EVAL_EVERY, CARRYONLY_WEIGHTS, CARRYONLY_WEIGHTS_LONG
 from data_generation.CarryOnlyGenerator import (CarryOnlyDataset, compute_carry, assemble,
-                                 sample_ab, VOCAB, IGNORE, TARGET_ACTIVE, GEN_DIST_MAX)
+                                 sample_ab, VOCAB, IGNORE, TARGET_ACTIVE, GEN_DIST_MAX, LONG_VARIANT)
 
 
 def make_eval_batch(bs, min_n, max_n, chain_max, target_active, max_len, device):
@@ -89,7 +89,10 @@ def train_carry():
     """Pretrain on carry-chain sequences and save Model A's weights, routing to the
     standard or long-chain checkpoint path based on GEN_DIST_MAX (see module header)."""
 
-    MIN_N, MAX_N = 16, 40
+    if LONG_VARIANT: 
+        MIN_N, MAX_N = 16, 40
+    else: 
+        MIN_N, MAX_N = 8, 24
     LONG_THRESH = 5
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

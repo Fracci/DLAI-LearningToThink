@@ -13,11 +13,16 @@ from torch.utils.data import Dataset
 import random
 
 # Token ids and the special targets/clamp used throughout.
+LONG_VARIANT = False
 ZERO, ONE, SEP, QUERY, PAD = 0, 1, 2, 3, 4
 VOCAB = 5
 IGNORE = -100             # CrossEntropy ignore_index for non-query positions
 TARGET_ACTIVE = 0.25      # probability of starting a planted carry chain
-GEN_DIST_MAX = 24         # gen_dist labels clamped to [0, GEN_DIST_MAX] -> 13 classes
+
+if LONG_VARIANT: 
+    GEN_DIST_MAX = 24
+else: 
+    GEN_DIST_MAX = 12         # gen_dist labels clamped to [0, GEN_DIST_MAX] -> 13 classes
 
 
 def sample_ab(n, chain_max=12, target_active=TARGET_ACTIVE):
